@@ -28,6 +28,8 @@ from src.training.trainer import CPTTrainer
 from src.utils.config import load_config, detect_environment
 from src.utils.logging_utils import setup_logging
 
+from tqdm.auto import tqdm
+
 logger = logging.getLogger(__name__)
 
 
@@ -57,19 +59,20 @@ def main():
     data_dir = args.data_dir or config["storage"]["processed_data"]["path"]
     data_path = Path(data_dir)
 
-    if data_path.exists() and any(data_path.glob("shard_*.arrow")) or any(data_path.glob("shard_*.parquet")):
-        logger.info(f"Loading processed shards from {data_path}...")
-        arrow_files = list(data_path.glob("shard_*.arrow"))
-        parquet_files = list(data_path.glob("shard_*.parquet"))
+    if data_path.exists() and (any(data_path.glob("shard_*.arrow")) or any(data_path.glob("shard_*.parquet"))):
+        logger.info(f"Discovering processed shards from {data_path}...")
+        arrow_files = sorted(list(data_path.glob("shard_*.arrow")))
+        parquet_files = sorted(list(data_path.glob("shard_*.parquet")))
 
-        if arrow_files:
-            train_dataset = load_dataset("arrow", data_files=[str(f) for f in arrow_files], split="train")
-        elif parquet_files:
-            train_dataset = load_dataset("parquet", data_files=[str(f) for f in parquet_files], split="train")
-        else:
-            raise FileNotFoundError(f"No shard files found in {data_path}")
+        files_to_load = [str(f) for f in (arrow_files or parquet_files)]
+        file_type = "arrow" if arrow_files else "parquet"
+        logger.info(f"Found {len(files_to_load)} {file_type} shard files. Loading...")
 
-        logger.info(f"Loaded {len(train_dataset):,} packed training sequences.")
+        for f in tqdm(files_to_load, desc="Validating data shards", unit="shard"):
+            pass
+
+        train_dataset = load_dataset(file_type, data_files=files_to_load, split="train")
+        logger.info(f"✓ Loaded {len(train_dataset):,} packed training sequences.")
     else:
         logger.warning(
             f"No processed shards found in {data_path}. "

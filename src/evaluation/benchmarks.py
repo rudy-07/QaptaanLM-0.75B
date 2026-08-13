@@ -91,7 +91,7 @@ def evaluate_generation(
     model.eval()
     results = []
 
-    for item in prompts:
+    for item in tqdm(prompts, desc="Generating benchmark completions", unit="prompt"):
         prompt_text = item["prompt"]
         inputs = tokenizer(prompt_text, return_tensors="pt").to(device)
 
@@ -146,7 +146,7 @@ def compute_perplexity(
     loss_fn = torch.nn.CrossEntropyLoss(reduction="sum")
 
     with torch.no_grad():
-        for text in eval_texts:
+        for text in tqdm(eval_texts, desc="Computing perplexity", unit="doc"):
             if not text.strip():
                 continue
             encodings = tokenizer(

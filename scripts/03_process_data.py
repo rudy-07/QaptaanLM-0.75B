@@ -48,6 +48,8 @@ from src.data.tokenize_and_pack import Tokenizer, create_packed_dataset
 from src.data.mixture import DatasetMixer
 from src.data.sharding import DatasetSharder
 
+from tqdm.auto import tqdm
+
 logger = logging.getLogger(__name__)
 
 
@@ -95,7 +97,10 @@ def build_filtered_stream(
         logger.error(f"Unknown dataset: {dataset_name}")
         return
 
+    pbar = tqdm(desc=f"Streaming & Filtering [{dataset_name}]", unit="doc", leave=False)
+
     for sample in raw_stream:
+        pbar.update(1)
         # Apply filter
         filtered = filter_fn(sample)
         if filtered is None:
@@ -108,19 +113,13 @@ def build_filtered_stream(
             continue
 
         yielded += 1
+        pbar.set_postfix({"yielded": f"{yielded:,}", "pass_rate": f"{stats.pass_rate:.1%}"})
         yield filtered
 
         if max_samples and yielded >= max_samples:
             break
 
-        # Progress logging
-        if yielded % 10_000 == 0:
-            logger.info(
-                f"[{dataset_name}] Yielded {yielded:,} samples, "
-                f"filter stats: seen={stats.total_seen:,}, "
-                f"pass_rate={stats.pass_rate:.1%}"
-            )
-
+    pbar.close()
     # Final stats
     logger.info(
         f"[{dataset_name}] Final: {yielded:,} samples yielded. "
@@ -261,15 +260,20 @@ def process_data(
 
     logger.info(f"Writing shards to {output_dir}")
 
+    pack_pbar = tqdm(desc="Packing & Sharding Sequences", unit="seq")
+
     for i, sequence in enumerate(packed):
         sharder.add_sequence(sequence)
+        pack_pbar.update(1)
 
         if (i + 1) % 1000 == 0:
             elapsed = time.time() - start_time
-            logger.info(
-                f"Packed {i+1:,} sequences in {elapsed:.0f}s "
-                f"({(i+1)/elapsed:.1f} seq/s)"
-            )
+            pack_pbar.set_postfix({
+                "tokens": f"{sharder._total_tokens:,}",
+                "shards": sharder._shard_index,
+            })
+
+    pack_pbar.close()
 
     # Finalize
     final_stats = sharder.finalize()

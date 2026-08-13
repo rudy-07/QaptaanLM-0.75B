@@ -70,8 +70,9 @@ def verify_dataset(name: str, source: str, **load_kwargs):
 
         # Get a few more samples for statistics
         print(f"\n  Sampling 10 records for stats...")
+        from tqdm.auto import tqdm
         samples = [sample]
-        for i, s in enumerate(ds_iter):
+        for i, s in enumerate(tqdm(ds_iter, total=9, desc=f"Sampling [{name}]", leave=False)):
             samples.append(s)
             if i >= 8:  # Already have 1, get 9 more = 10 total
                 break
@@ -132,7 +133,8 @@ def verify_all_datasets():
     # 4. The Vault
     results["the_vault"] = verify_dataset(
         "The Vault (Function-Level)",
-        "Fsoft-AIC/the-vault-function",
+        "parquet",
+        data_files="hf://datasets/Fsoft-AIC/the-vault-function/data/train/full/*.parquet",
         split="train",
     )
 
