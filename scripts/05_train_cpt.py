@@ -23,6 +23,14 @@ if sys.stdout.encoding != 'utf-8':
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
+# Prevent broken torchvision binary mismatch crashes in Colab/Kaggle
+try:
+    import transformers.utils.import_utils as _iu
+    _iu._torchvision_available = False
+    _iu.is_torchvision_available = lambda: False
+except Exception:
+    pass
+
 from datasets import load_dataset, Dataset
 from src.training.trainer import CPTTrainer
 from src.utils.config import load_config, detect_environment
