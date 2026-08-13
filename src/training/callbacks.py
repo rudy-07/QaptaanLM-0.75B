@@ -44,12 +44,15 @@ class TokenCountCallback(TrainerCallback):
     def on_train_begin(self, args, state, control, **kwargs):
         self.start_time = time.time()
         total_steps = self.target_tokens // self.tokens_per_step
-        logger.info(
-            f"Training started. Target: {self.target_tokens:,} tokens, "
-            f"~{total_steps:,} steps ({self.tokens_per_step:,} tokens/step)"
-        )
+        if state.is_world_process_zero:
+            logger.info(
+                f"Training started. Target: {self.target_tokens:,} tokens, "
+                f"~{total_steps:,} steps ({self.tokens_per_step:,} tokens/step)"
+            )
 
     def on_log(self, args, state, control, logs=None, **kwargs):
+        if not state.is_world_process_zero:
+            return
         if state.global_step > 0:
             tokens_so_far = state.global_step * self.tokens_per_step
             progress = tokens_so_far / self.target_tokens
@@ -99,6 +102,10 @@ class CheckpointUploadCallback(TrainerCallback):
         self._save_count = 0
 
     def on_save(self, args, state, control, **kwargs):
+        # In DDP multi-GPU, only rank 0 handles saving / uploading
+        if not state.is_world_process_zero:
+            return
+
         self._save_count += 1
 
         if self._save_count % self.upload_every_n_saves != 0:
