@@ -1,0 +1,53 @@
+# Evaluation Configuration
+# ============================================================
+
+evaluation:
+  # Benchmarks to run
+  benchmarks:
+    # Code generation
+    - name: "humaneval"
+      type: "code_generation"
+      metric: "pass@1"
+      
+    - name: "mbpp"
+      type: "code_generation"
+      metric: "pass@1"
+    
+    # Math reasoning
+    - name: "gsm8k"
+      type: "math"
+      metric: "accuracy"
+      shots: 5
+    
+    # General knowledge
+    - name: "mmlu"
+      type: "knowledge"
+      metric: "accuracy"
+      shots: 5
+      # Use a subset for faster evaluation
+      subjects:
+        - "computer_science"
+        - "mathematics"
+        - "engineering"
+    
+    - name: "hellaswag"
+      type: "commonsense"
+      metric: "accuracy"
+      shots: 0
+
+  # Generation settings for code benchmarks
+  generation:
+    max_new_tokens: 512
+    temperature: 0.0
+    top_p: 1.0
+    do_sample: false
+
+  # Private evaluation set
+  private_eval:
+    enabled: true
+    path: "data/eval/private_eval.jsonl"
+    
+  # Comparison mode
+  compare:
+    base_model: "Qwen/Qwen3.5-0.8B-Base"
+    cpt_model: null  # Set after CPT completes
