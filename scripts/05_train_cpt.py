@@ -20,6 +20,8 @@ if sys.stdout.encoding != 'utf-8':
     except Exception:
         pass
 
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 

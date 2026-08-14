@@ -60,48 +60,67 @@ def detect_hardware() -> Dict[str, Any]:
     return info
 
 
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
+
 def auto_configure_batch_size(
     gpu_memory_gb: float,
     seq_length: int = 4096,
     model_params_b: float = 0.8,
+    gpu_count: int = 1,
+    vocab_size: int = 248320,
 ) -> Tuple[int, int]:
-    """Automatically determine batch size and gradient accumulation.
+    """Automatically determine safe micro batch size and gradient accumulation.
+
+    Accounts for model parameters, optimizer states (AdamW), gradient checkpointing,
+    and the large vocabulary (248k) logits tensor in float32 during loss calculation.
 
     Args:
         gpu_memory_gb: Available GPU memory in GB.
         seq_length: Sequence length.
         model_params_b: Model parameters in billions.
+        gpu_count: Number of GPUs available.
+        vocab_size: Model vocabulary size (default 248,320 for Qwen3.5).
 
     Returns:
         Tuple of (micro_batch_size, gradient_accumulation_steps).
     """
-    # Rough memory estimates for full-parameter training with gradient checkpointing:
-    # Model weights: ~2 bytes per param (bf16) = 1.6 GB for 0.8B
-    # Optimizer states (AdamW): ~8 bytes per param = 6.4 GB
-    # Gradients: ~2 bytes per param = 1.6 GB
-    # Activations with grad checkpointing: ~2-4 GB depending on batch/seq
-    # Total base: ~12 GB for 0.8B model
+    # Base memory: model (2B/param) + grads (2B/param) + AdamW states (8B/param) + CUDA/NCCL overhead (~1.5GB)
+    base_memory_gb = (model_params_b * 12.0) + 1.5  # ~11.1 GB for 0.8B
 
-    base_memory_gb = model_params_b * 15  # Rough estimate
+    # Per-sample peak memory at loss computation:
+    # - Logits in fp32: seq_length * vocab_size * 4 bytes
+    # - Activations with gradient checkpointing: ~0.5 GB
+    logits_gb = (seq_length * vocab_size * 4) / (1024**3)
+    activation_gb = (seq_length / 4096) * 0.5
+    mem_per_sample_gb = logits_gb + activation_gb
 
-    available_for_batch = gpu_memory_gb - base_memory_gb
-    # Each batch element ≈ seq_length * hidden_size * num_layers * 2 bytes
-    # For 0.8B: roughly 0.5-1 GB per batch element at seq_len=4096
-    mem_per_sample_gb = seq_length / 4096 * 0.8
-
-    if available_for_batch <= 0:
+    # Strict safety cap based on total GPU VRAM
+    if gpu_memory_gb <= 16.5:
+        # 16GB GPUs (T4, P100, V100-16GB): Must use micro_batch=1 due to 3.8GB logits tensor
         micro_batch = 1
+    elif gpu_memory_gb <= 24.5:
+        # 24GB GPUs (L4, RTX 3090, RTX 4090, A10G): max micro_batch=2
+        available = max(0.0, gpu_memory_gb - base_memory_gb)
+        micro_batch = max(1, min(2, int(available / mem_per_sample_gb)))
+    elif gpu_memory_gb <= 48.0:
+        # 40GB/48GB GPUs (A100-40GB, A6000): max micro_batch=4
+        available = max(0.0, gpu_memory_gb - base_memory_gb)
+        micro_batch = max(1, min(4, int(available / mem_per_sample_gb)))
     else:
-        micro_batch = max(1, int(available_for_batch / mem_per_sample_gb))
+        # 80GB GPUs (A100-80GB, H100):
+        available = max(0.0, gpu_memory_gb - base_memory_gb)
+        micro_batch = max(1, int(available / mem_per_sample_gb))
 
-    # Target effective batch of ~128 sequences
-    target_effective = 128
-    grad_accum = max(1, target_effective // micro_batch)
+    # Target effective global batch size of ~64 to 128 sequences (256k-512k tokens per step)
+    target_effective_sequences = 64
+    total_micro_batch = micro_batch * max(1, gpu_count)
+    grad_accum = max(1, target_effective_sequences // total_micro_batch)
 
     logger.info(
         f"Auto-configured: micro_batch={micro_batch}, "
         f"grad_accum={grad_accum} "
-        f"(effective={micro_batch * grad_accum})"
+        f"(effective_batch_size={micro_batch * grad_accum * max(1, gpu_count)} sequences across {max(1, gpu_count)} GPU(s))"
     )
 
     return micro_batch, grad_accum

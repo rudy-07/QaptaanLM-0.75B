@@ -65,9 +65,11 @@ class CPTTrainer:
 
         # Auto-configure batch size if GPU detected
         if self.hardware["gpu_memory_gb"]:
+            n_gpus = max(self.hardware.get("gpu_count", 1), 1)
             micro_batch, grad_accum = auto_configure_batch_size(
                 gpu_memory_gb=self.hardware["gpu_memory_gb"],
                 seq_length=train_cfg["max_seq_length"],
+                gpu_count=n_gpus,
             )
             # Use auto-configured values unless explicitly set in config
             if self.env != "local":
