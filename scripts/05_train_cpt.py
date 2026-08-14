@@ -63,7 +63,7 @@ def main():
     logger.info(f"Starting Qwen3.5-0.8B CPT Training in [{env}] environment")
     logger.info("=" * 60)
 
-    # Determine dataset path
+    # Determine dataset path or Hugging Face Hub repo ID
     data_dir = args.data_dir or config["storage"]["processed_data"]["path"]
     data_path = Path(data_dir)
 
@@ -81,9 +81,14 @@ def main():
 
         train_dataset = load_dataset(file_type, data_files=files_to_load, split="train")
         logger.info(f"✓ Loaded {len(train_dataset):,} packed training sequences.")
+    elif "/" in str(data_dir) and not data_path.exists():
+        # Load directly from Hugging Face dataset repository
+        logger.info(f"Loading dataset directly from Hugging Face Hub: {data_dir}...")
+        train_dataset = load_dataset(str(data_dir), split="train")
+        logger.info(f"✓ Loaded {len(train_dataset):,} packed training sequences from HF Hub.")
     else:
         logger.warning(
-            f"No processed shards found in {data_path}. "
+            f"No processed shards found in {data_path} and '{data_dir}' is not a valid dataset path. "
             "Please run scripts/03_process_data.py first to generate training shards."
         )
         return
