@@ -65,6 +65,7 @@ def build_filtered_stream(
     dedup: DeduplicationPipeline,
     lang_detector: Optional[LanguageDetector] = None,
     max_samples: Optional[int] = None,
+    skip_docs: int = 0,
 ) -> Generator[Dict[str, Any], None, None]:
     """Build a filtered, deduplicated stream for a single dataset.
 
@@ -75,6 +76,7 @@ def build_filtered_stream(
         dedup: Deduplication pipeline.
         lang_detector: Optional language detector.
         max_samples: Maximum samples to yield (for testing).
+        skip_docs: Number of initial documents to skip (e.g. from Part 1).
 
     Yields:
         Filtered, deduplicated samples.
@@ -103,7 +105,7 @@ def build_filtered_stream(
         logger.error(f"Unknown dataset: {dataset_name}")
         return
 
-    logger.info(f"[{dataset_name}] Stream connection initialized. Reading samples...")
+    logger.info(f"[{dataset_name}] Stream connection initialized. Reading samples (skip_docs={skip_docs:,})...")
 
     for sample in raw_stream:
         # Apply filter
@@ -127,24 +129,31 @@ def build_filtered_stream(
         consecutive_rejections = 0
         yielded += 1
 
-        if yielded == 1:
-            logger.info(f"[{dataset_name}] First document passed filters and deduplication.")
+        # Skip documents from previous part if requested
+        if skip_docs > 0 and yielded <= skip_docs:
+            if yielded % 50_000 == 0 or yielded == skip_docs:
+                logger.info(f"[{dataset_name}] Fast-forwarded past Part 1: skipped doc {yielded:,} / {skip_docs:,}")
+            continue
+
+        active_yielded = yielded - skip_docs
+        if active_yielded == 1:
+            logger.info(f"[{dataset_name}] First document of batch passed filters and deduplication.")
 
         yield filtered
 
-        if max_samples and yielded >= max_samples:
+        if max_samples and active_yielded >= max_samples:
             break
 
         # Log filter progress periodically
-        if yielded % 10_000 == 0:
+        if active_yielded % 10_000 == 0:
             logger.info(
-                f"[{dataset_name}] Streamed & yielded {yielded:,} documents | "
+                f"[{dataset_name}] Streamed & yielded {active_yielded:,} documents | "
                 f"Pass rate: {stats.pass_rate:.1%}"
             )
 
     # Final stats
     logger.info(
-        f"[{dataset_name}] Stream finished: {yielded:,} documents yielded. "
+        f"[{dataset_name}] Stream finished: {yielded - skip_docs:,} new documents yielded. "
         f"Filter stats: {stats.summary()}"
     )
     logger.info(f"[{dataset_name}] Dedup stats: {dedup.stats()}")
@@ -157,9 +166,21 @@ def process_data(
     target_tokens_override: Optional[int] = None,
     disable_minhash: bool = False,
     shard_offset: int = 0,
+    skip_part1: bool = False,
 ):
     """Run the full data processing pipeline."""
     start_time = time.time()
+
+    PART1_DOC_COUNTS = {
+        "stack_v3_code": 214518,
+        "stack_v3_docs": 119506,
+        "the_vault": 309433,
+        "fineweb_hq": 86344,
+        "openwebmath": 33079,
+    }
+
+    if skip_part1 and shard_offset == 0:
+        shard_offset = 115
 
     # Load configs
     train_config = load_config("cpt_config.yaml")
@@ -183,6 +204,7 @@ def process_data(
     logger.info(f"Target Total Tokens: {target_tokens:,}")
     logger.info(f"Max samples per dataset: {max_samples or 'unlimited'}")
     logger.info(f"Shard numbering offset: {shard_offset}")
+    logger.info(f"Skip Part 1 (resume next 500M): {skip_part1}")
 
     # Initialize components
     logger.info("\n--- Initializing components ---")
@@ -213,7 +235,8 @@ def process_data(
     logger.info("\n--- Building filtered streams ---")
     filtered_streams = {}
     for name, cfg in datasets_to_process.items():
-        logger.info(f"Setting up stream: {name}")
+        skip_count = PART1_DOC_COUNTS.get(name, 0) if skip_part1 else 0
+        logger.info(f"Setting up stream: {name} (skipping {skip_count:,} past Part 1)")
         filtered_streams[name] = build_filtered_stream(
             loader=loader,
             dataset_name=name,
@@ -221,6 +244,7 @@ def process_data(
             dedup=dedup,
             lang_detector=lang_detector,
             max_samples=max_samples,
+            skip_docs=skip_count,
         )
 
     # Setup mixer
@@ -383,6 +407,11 @@ if __name__ == "__main__":
         default=0,
         help="Starting index for shard files (e.g. 115 for part 2)",
     )
+    parser.add_argument(
+        "--skip-part1",
+        action="store_true",
+        help="Skip the exact documents processed in Part 1 to generate distinct Part 2 data",
+    )
     args = parser.parse_args()
 
     process_data(
@@ -392,5 +421,6 @@ if __name__ == "__main__":
         target_tokens_override=args.target_tokens,
         disable_minhash=args.disable_minhash,
         shard_offset=args.shard_offset,
+        skip_part1=args.skip_part1,
     )
     sys.exit(0)
