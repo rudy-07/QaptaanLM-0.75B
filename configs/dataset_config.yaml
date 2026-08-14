@@ -238,7 +238,7 @@ datasets:
       language_detection:
         enabled: true
         model: "fasttext"
-        min_english_confidence: 0.80
+        min_english_confidence: 0.70
       
       # Content filtering
       min_length_chars: 200
@@ -333,9 +333,9 @@ deduplication:
     # Hash the normalized content (stripped whitespace)
     normalize: true
   
-  # Near-dedup via MinHash
+  # Near-dedup via MinHash (disabled by default for high streaming throughput; exact SHA-256 enabled)
   minhash:
-    enabled: true
+    enabled: false
     num_perm: 128
     threshold: 0.7  # Jaccard similarity threshold
     ngram_size: 5

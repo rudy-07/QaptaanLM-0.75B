@@ -81,6 +81,7 @@ def build_filtered_stream(
     """
     stats = FilterStats()
     yielded = 0
+    consecutive_rejections = 0
 
     # Select the right loader and filter
     if dataset_name == "stack_v3_code":
@@ -102,26 +103,40 @@ def build_filtered_stream(
         logger.error(f"Unknown dataset: {dataset_name}")
         return
 
+    logger.info(f"[{dataset_name}] Stream connection initialized. Reading samples...")
+
     for sample in raw_stream:
         # Apply filter
         filtered = filter_fn(sample)
         if filtered is None:
+            consecutive_rejections += 1
+            if consecutive_rejections == 5000:
+                logger.warning(
+                    f"[{dataset_name}] High rejection alert: 5,000 consecutive items rejected! "
+                    f"Current top rejection reasons: {stats.summary().get('rejection_reasons', {})}"
+                )
             continue
 
         # Deduplicate
         text = filtered.get("text", "")
         doc_id = f"{dataset_name}:{yielded}"
         if dedup.is_duplicate(text, doc_id):
+            consecutive_rejections += 1
             continue
 
+        consecutive_rejections = 0
         yielded += 1
+
+        if yielded == 1:
+            logger.info(f"[{dataset_name}] First document passed filters and deduplication.")
+
         yield filtered
 
         if max_samples and yielded >= max_samples:
             break
 
         # Log filter progress periodically
-        if yielded % 50_000 == 0:
+        if yielded % 10_000 == 0:
             logger.info(
                 f"[{dataset_name}] Streamed & yielded {yielded:,} documents | "
                 f"Pass rate: {stats.pass_rate:.1%}"
@@ -139,6 +154,8 @@ def process_data(
     max_samples: Optional[int] = None,
     datasets_filter: Optional[list] = None,
     output_dir: Optional[str] = None,
+    target_tokens_override: Optional[int] = None,
+    disable_minhash: bool = False,
 ):
     """Run the full data processing pipeline."""
     start_time = time.time()
@@ -152,10 +169,17 @@ def process_data(
     log_dir = str(project_root / "logs")
     setup_logging(log_dir=log_dir, log_name="data_processing")
 
+    # Target tokens
+    global_cfg = dataset_config.get("global", {})
+    target_tokens = target_tokens_override or global_cfg.get("target_total_tokens", 1_000_000_000)
+    if max_samples:
+        target_tokens = min(target_tokens, max_samples * 500 * (len(datasets_filter) if datasets_filter else 5))
+
     logger.info("=" * 60)
     logger.info("CPT Data Processing & Token Sharding Pipeline")
     logger.info("=" * 60)
     logger.info(f"Environment: {env}")
+    logger.info(f"Target Total Tokens: {target_tokens:,}")
     logger.info(f"Max samples per dataset: {max_samples or 'unlimited'}")
 
     # Initialize components
@@ -163,9 +187,11 @@ def process_data(
 
     lang_detector = LanguageDetector()
     dedup_config = dataset_config.get("deduplication", {})
+    if disable_minhash and "minhash" in dedup_config:
+        dedup_config["minhash"]["enabled"] = False
+
     dedup = DeduplicationPipeline(dedup_config)
 
-    global_cfg = dataset_config.get("global", {})
     tokenizer_name = global_cfg.get("tokenizer", "Qwen/Qwen3.5-0.8B-Base")
     processing_cfg = dataset_config.get("processing", {})
     seq_length = processing_cfg.get("packing", {}).get("max_seq_length", 4096)
@@ -204,10 +230,6 @@ def process_data(
     if total_prop > 0 and abs(total_prop - 1.0) > 0.01:
         proportions = {k: v / total_prop for k, v in proportions.items()}
 
-    target_tokens = global_cfg.get("target_total_tokens", 1_000_000_000)
-    if max_samples:
-        target_tokens = min(target_tokens, max_samples * 500 * len(datasets_to_process))
-
     target_sequences = max(1, target_tokens // seq_length)
 
     mixer = DatasetMixer(
@@ -227,9 +249,10 @@ def process_data(
     fim_cfg = datasets_cfg.get("stack_v3_code", {}).get("fim", {})
     fim_rate = fim_cfg.get("rate", 0.5) if fim_cfg.get("enabled") else 0.0
 
+    # Use fast character estimation in mixer to avoid double-tokenizing every doc
     mixed = mixer.mix(
         streams=filtered_streams,
-        token_count_fn=tokenizer.count_tokens,
+        token_count_fn=None,
     )
 
     packed = create_packed_dataset(
@@ -252,17 +275,17 @@ def process_data(
 
     logger.info(f"Writing shards to: {output_dir}")
 
-    # Track progress
-    log_interval = 200  # Log every 200 sequences (~819,200 tokens)
+    # Track progress - log frequently for responsive feedback
+    log_interval = 25  # Log every 25 sequences (~102,400 tokens)
 
     for i, sequence in enumerate(packed):
         sharder.add_sequence(sequence)
 
         current_seq = i + 1
         current_tokens = current_seq * seq_length
-        progress_pct = (current_tokens / target_tokens) * 100
+        progress_pct = min(100.0, (current_tokens / target_tokens) * 100)
 
-        if current_seq % log_interval == 0 or current_tokens >= target_tokens:
+        if current_seq % log_interval == 0 or current_tokens >= target_tokens or current_seq == 1:
             elapsed = time.time() - start_time
             seq_per_sec = current_seq / max(elapsed, 1)
             tok_per_sec = current_tokens / max(elapsed, 1)
@@ -321,6 +344,12 @@ if __name__ == "__main__":
         help="Max samples per dataset (for testing)",
     )
     parser.add_argument(
+        "--target-tokens",
+        type=int,
+        default=None,
+        help="Target total tokens to shard (e.g. 50000000 for 50M tokens)",
+    )
+    parser.add_argument(
         "--datasets",
         nargs="+",
         default=None,
@@ -332,10 +361,17 @@ if __name__ == "__main__":
         default=None,
         help="Override output directory",
     )
+    parser.add_argument(
+        "--disable-minhash",
+        action="store_true",
+        help="Force disable MinHash near-deduplication for maximum speed",
+    )
     args = parser.parse_args()
 
     process_data(
         max_samples=args.max_samples,
         datasets_filter=args.datasets,
         output_dir=args.output_dir,
+        target_tokens_override=args.target_tokens,
+        disable_minhash=args.disable_minhash,
     )

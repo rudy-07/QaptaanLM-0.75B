@@ -6,7 +6,7 @@ to achieve the target token distribution.
 
 import logging
 import random
-from typing import Any, Dict, Generator, List, Optional
+from typing import Any, Dict, Generator, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
@@ -53,19 +53,24 @@ class DatasetMixer:
                 f"({target_proportions[name]:.0%})"
             )
 
-    def _select_source(self) -> Optional[str]:
+    def _select_source(self, exhausted: Optional[Set[str]] = None) -> Optional[str]:
         """Select the next source to sample from.
 
         Uses the deficit-based approach: preferentially sample from
-        sources that are furthest behind their target proportion.
+        sources that are furthest behind their target proportion,
+        excluding exhausted sources.
         """
         total_actual = sum(self.actual_tokens.values())
         if total_actual >= self.target_total_tokens:
             return None
 
-        # Compute deficit for each source
+        exhausted_set = exhausted or set()
+
+        # Compute deficit for each unexhausted source
         deficits = {}
         for name, target in self.target_tokens.items():
+            if name in exhausted_set:
+                continue
             actual = self.actual_tokens[name]
             if actual >= target:
                 continue  # This source has met its quota
@@ -73,14 +78,19 @@ class DatasetMixer:
             deficits[name] = deficit
 
         if not deficits:
-            return None
+            # If all non-exhausted sources met quota but total target not reached,
+            # sample from any remaining available non-exhausted source
+            available = [name for name in self.target_tokens.keys() if name not in exhausted_set]
+            if not available:
+                return None
+            return self.rng.choice(available)
 
         # Weight selection by deficit (sources further behind get priority)
         names = list(deficits.keys())
         weights = [deficits[n] for n in names]
         total_weight = sum(weights)
         if total_weight == 0:
-            return None
+            return self.rng.choice(names)
 
         # Weighted random selection
         r = self.rng.random() * total_weight
@@ -113,16 +123,9 @@ class DatasetMixer:
         exhausted = set()
 
         while True:
-            source = self._select_source()
+            source = self._select_source(exhausted=exhausted)
             if source is None:
                 break
-
-            if source in exhausted:
-                # Try another source
-                remaining = set(iterators.keys()) - exhausted
-                if not remaining:
-                    break
-                source = self.rng.choice(list(remaining))
 
             try:
                 doc = next(iterators[source])

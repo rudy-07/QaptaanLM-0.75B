@@ -683,23 +683,44 @@ class LanguageDetector:
         return self._fallback_detect(text)
 
     def _fallback_detect(self, text: str) -> Tuple[str, float]:
-        """Simple fallback language detection using character analysis."""
-        # Count ASCII vs non-ASCII
-        ascii_chars = sum(1 for c in text if ord(c) < 128)
+        """Robust fallback language detection using ASCII ratio and English stopwords."""
         total_chars = len(text)
-
         if total_chars == 0:
             return ("unknown", 0.0)
 
+        # Try langdetect if available
+        try:
+            import langdetect
+            lang = langdetect.detect(text[:1000])
+            if lang == "en":
+                return ("en", 0.95)
+            return (lang, 0.90)
+        except Exception:
+            pass
+
+        ascii_chars = sum(1 for c in text if ord(c) < 128)
         ascii_ratio = ascii_chars / total_chars
 
-        # High ASCII ratio suggests English or code
-        if ascii_ratio > 0.95:
-            return ("en", 0.7)
-        elif ascii_ratio > 0.80:
-            return ("en", 0.5)
+        if ascii_ratio < 0.60:
+            return ("unknown", 0.1)
+
+        # Fast English stopwords frequency check
+        words = set(re.findall(r"\b[a-z]{2,8}\b", text[:2000].lower()))
+        common_en = {
+            "the", "and", "is", "of", "to", "in", "that", "with", "for", "as",
+            "this", "are", "from", "at", "by", "an", "be", "have", "not", "or",
+            "it", "you", "which", "on", "we", "can", "if", "code", "file", "data"
+        }
+        overlap = len(words.intersection(common_en))
+
+        if ascii_ratio > 0.90 and overlap >= 3:
+            return ("en", 0.95)
+        elif ascii_ratio > 0.85 and overlap >= 1:
+            return ("en", 0.88)
+        elif ascii_ratio > 0.75:
+            return ("en", 0.75)
         else:
-            return ("unknown", 0.3)
+            return ("unknown", 0.4)
 
     def __call__(self, text: str) -> Tuple[str, float]:
         """Convenience: make the detector callable."""
