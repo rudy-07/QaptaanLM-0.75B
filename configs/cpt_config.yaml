@@ -62,7 +62,7 @@ training:
   # Logging
   logging_steps: 10
   logging_first_step: true
-  report_to: "wandb"
+  report_to: "none"
   run_name: "qwen35-0.8b-cpt"
   
   # Checkpointing
