@@ -83,8 +83,9 @@ def main():
         logger.info(f"✓ Loaded {len(train_dataset):,} packed training sequences.")
     elif "/" in str(data_dir) and not data_path.exists():
         # Load directly from Hugging Face dataset repository
+        hf_token = os.environ.get("HF_TOKEN")
         logger.info(f"Loading dataset directly from Hugging Face Hub: {data_dir}...")
-        train_dataset = load_dataset(str(data_dir), split="train")
+        train_dataset = load_dataset(str(data_dir), split="train", token=hf_token)
         logger.info(f"✓ Loaded {len(train_dataset):,} packed training sequences from HF Hub.")
     else:
         logger.warning(
