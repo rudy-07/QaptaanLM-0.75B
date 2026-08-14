@@ -118,6 +118,24 @@ class CPTTrainer:
             else:
                 warmup_steps = 100
 
+        # Determine optimizer: prefer 8-bit AdamW on memory-constrained GPUs (<=16GB) to save ~4.5GB VRAM
+        optim_name = train_cfg.get("optim", "adamw_torch")
+        if optim_name in ("paged_adamw_8bit", "adamw_bnb_8bit") or (
+            self.hardware.get("gpu_memory_gb") and self.hardware["gpu_memory_gb"] <= 16.5
+        ):
+            try:
+                import bitsandbytes  # noqa: F401
+                optim_name = "paged_adamw_8bit"
+                logger.info("Using 'paged_adamw_8bit' optimizer to optimize VRAM on 16GB GPU (saves ~4.5GB VRAM)")
+            except ImportError:
+                optim_name = "adamw_torch"
+                if self.hardware.get("gpu_memory_gb") and self.hardware["gpu_memory_gb"] <= 16.5:
+                    logger.warning(
+                        "bitsandbytes is not installed. Using standard 'adamw_torch'. "
+                        "If you experience CUDA OOM during backward pass at seq_len=4096, "
+                        "install bitsandbytes (`pip install bitsandbytes`) to use 8-bit optimizer."
+                    )
+
         candidate_kwargs = {
             "output_dir": train_cfg["output_dir"],
             "max_steps": max_steps,
@@ -131,7 +149,7 @@ class CPTTrainer:
             "bf16": train_cfg.get("bf16", True),
             "fp16": train_cfg.get("fp16", False),
             "gradient_checkpointing": train_cfg.get("gradient_checkpointing", True),
-            "optim": train_cfg.get("optim", "adamw_torch"),
+            "optim": optim_name,
             "adam_beta1": train_cfg.get("adam_beta1", 0.9),
             "adam_beta2": train_cfg.get("adam_beta2", 0.95),
             "adam_epsilon": train_cfg.get("adam_epsilon", 1e-8),

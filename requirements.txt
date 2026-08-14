@@ -9,6 +9,7 @@ datasets>=3.0.0
 # Training
 peft>=0.17.0
 trl>=0.17.0
+bitsandbytes>=0.43.0
 
 # Data processing
 fasttext-wheel>=0.9.2
