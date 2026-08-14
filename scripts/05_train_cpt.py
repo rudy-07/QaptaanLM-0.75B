@@ -67,34 +67,59 @@ def main():
 
     # Determine dataset path or Hugging Face Hub repo ID
     data_dir = args.data_dir or config["storage"]["processed_data"]["path"]
-    data_path = Path(data_dir)
+    
+    # Check if data_dir is a local directory or Kaggle input mount
+    train_dataset = None
+    data_path = Path(data_dir) if data_dir else None
 
-    if data_path.exists() and (any(data_path.glob("shard_*.arrow")) or any(data_path.glob("shard_*.parquet"))):
-        logger.info(f"Discovering processed shards from {data_path}...")
-        arrow_files = sorted(list(data_path.glob("shard_*.arrow")))
-        parquet_files = sorted(list(data_path.glob("shard_*.parquet")))
+    # If data_dir not found directly, check standard Kaggle input locations
+    if data_path and not data_path.exists() and os.path.exists("/kaggle/input"):
+        possible_kaggle_paths = [
+            Path("/kaggle/input") / Path(data_dir).name.lower(),
+            Path("/kaggle/input") / Path(data_dir).name,
+            Path("/kaggle/input") / data_dir.replace("/", "-").lower(),
+        ]
+        for p in possible_kaggle_paths:
+            if p.exists():
+                data_path = p
+                logger.info(f"Found dataset at Kaggle mount: {data_path}")
+                break
 
-        files_to_load = [str(f) for f in (arrow_files or parquet_files)]
-        file_type = "arrow" if arrow_files else "parquet"
-        logger.info(f"Found {len(files_to_load)} {file_type} shard files. Loading...")
+    if data_path and data_path.exists():
+        # 1. Try loading arrow/parquet files recursively
+        arrow_files = sorted([str(f) for f in data_path.rglob("*.arrow") if not f.name.startswith(".")])
+        parquet_files = sorted([str(f) for f in data_path.rglob("*.parquet") if not f.name.startswith(".")])
 
-        for f in tqdm(files_to_load, desc="Validating data shards", unit="shard"):
-            pass
+        if arrow_files or parquet_files:
+            file_type = "arrow" if arrow_files else "parquet"
+            files_to_load = arrow_files if arrow_files else parquet_files
+            logger.info(f"Found {len(files_to_load)} {file_type} shard files in {data_path}. Loading...")
+            train_dataset = load_dataset(file_type, data_files=files_to_load, split="train")
+            logger.info(f"✓ Loaded {len(train_dataset):,} packed training sequences.")
+        else:
+            # 2. Try load_from_disk (if saved with save_to_disk)
+            try:
+                from datasets import load_from_disk
+                train_dataset = load_from_disk(str(data_path))
+                if isinstance(train_dataset, dict):
+                    train_dataset = train_dataset.get("train", next(iter(train_dataset.values())))
+                logger.info(f"✓ Loaded {len(train_dataset):,} packed training sequences via load_from_disk.")
+            except Exception as e:
+                logger.warning(f"Could not load via load_from_disk: {e}")
 
-        train_dataset = load_dataset(file_type, data_files=files_to_load, split="train")
-        logger.info(f"✓ Loaded {len(train_dataset):,} packed training sequences.")
-    elif "/" in str(data_dir) and not data_path.exists():
-        # Load directly from Hugging Face dataset repository
-        hf_token = os.environ.get("HF_TOKEN")
-        logger.info(f"Loading dataset directly from Hugging Face Hub: {data_dir}...")
-        train_dataset = load_dataset(str(data_dir), split="train", token=hf_token)
-        logger.info(f"✓ Loaded {len(train_dataset):,} packed training sequences from HF Hub.")
-    else:
-        logger.warning(
-            f"No processed shards found in {data_path} and '{data_dir}' is not a valid dataset path. "
-            "Please run scripts/03_process_data.py first to generate training shards."
-        )
-        return
+    if train_dataset is None:
+        if data_dir and "/" in str(data_dir):
+            # Load directly from Hugging Face dataset repository
+            hf_token = os.environ.get("HF_TOKEN")
+            logger.info(f"Loading dataset directly from Hugging Face Hub: {data_dir}...")
+            train_dataset = load_dataset(str(data_dir), split="train", token=hf_token)
+            logger.info(f"✓ Loaded {len(train_dataset):,} packed training sequences from HF Hub.")
+        else:
+            logger.error(
+                f"No dataset found at '{data_dir}'. "
+                "Please verify the directory or provide a valid Kaggle path / HF Hub repo."
+            )
+            return
 
     # Initialize trainer
     trainer = CPTTrainer(config)
