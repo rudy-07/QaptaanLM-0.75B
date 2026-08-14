@@ -72,18 +72,28 @@ def load_config(config_name: str = "cpt_config.yaml") -> Dict[str, Any]:
     """Load a YAML configuration file.
 
     Args:
-        config_name: Name of the config file in the configs/ directory,
+        config_name: Name of the config file in configs/, relative path,
                      or an absolute path.
 
     Returns:
         Merged configuration dictionary with environment overrides applied.
     """
-    config_path = Path(config_name)
-    if not config_path.is_absolute():
-        config_path = get_project_root() / "configs" / config_name
+    candidates = [
+        Path(config_name),
+        get_project_root() / config_name,
+        get_project_root() / "configs" / config_name,
+        get_project_root() / "configs" / Path(config_name).name,
+    ]
+    config_path = None
+    for cand in candidates:
+        if cand.exists() and cand.is_file():
+            config_path = cand
+            break
 
-    if not config_path.exists():
-        raise FileNotFoundError(f"Config file not found: {config_path}")
+    if config_path is None:
+        raise FileNotFoundError(
+            f"Config file not found: {config_name} (searched: {[str(c) for c in candidates]})"
+        )
 
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
@@ -119,12 +129,22 @@ def load_dataset_config(config_name: str = "dataset_config.yaml") -> Dict[str, A
     Returns:
         Dataset configuration dictionary.
     """
-    config_path = Path(config_name)
-    if not config_path.is_absolute():
-        config_path = get_project_root() / "configs" / config_name
+    candidates = [
+        Path(config_name),
+        get_project_root() / config_name,
+        get_project_root() / "configs" / config_name,
+        get_project_root() / "configs" / Path(config_name).name,
+    ]
+    config_path = None
+    for cand in candidates:
+        if cand.exists() and cand.is_file():
+            config_path = cand
+            break
 
-    if not config_path.exists():
-        raise FileNotFoundError(f"Dataset config not found: {config_path}")
+    if config_path is None:
+        raise FileNotFoundError(
+            f"Dataset config not found: {config_name} (searched: {[str(c) for c in candidates]})"
+        )
 
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
