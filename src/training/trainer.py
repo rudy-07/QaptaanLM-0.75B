@@ -82,12 +82,18 @@ class CPTTrainer:
         # A100/H100/L4 have native BF16 Tensor Cores.
         has_bf16 = bool(self.hardware.get("bf16_support", False))
         if not has_bf16:
-            logger.info("GPU lacks native BF16 Tensor Cores (e.g. Tesla T4). Auto-switching to FP16 for 5-10x faster training.")
+            logger.info("GPU lacks native BF16 Tensor Cores (e.g. Tesla T4). Auto-switching to FP16 AMP (master weights in FP32 + FP16 autocast) for 5-10x faster training.")
             train_cfg["bf16"] = False
             train_cfg["fp16"] = True
-            model_dtype = "float16"
+            model_dtype = "float32"
         else:
             model_dtype = model_cfg.get("dtype", "bfloat16")
+            if model_dtype not in ("bfloat16", "float32"):
+                model_dtype = "bfloat16"
+
+        # In PyTorch AMP with fp16=True, master model weights must be float32 for GradScaler to unscale gradients
+        if train_cfg.get("fp16"):
+            model_dtype = "float32"
 
         # Use 0 dataloader workers in Colab/Kaggle containers to prevent shared-memory / CPU RAM exhaustion
         if self.env in ("kaggle", "colab"):

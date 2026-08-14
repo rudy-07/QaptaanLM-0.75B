@@ -13,8 +13,8 @@ model:
   trust_remote_code: true
   # Model revision for reproducibility
   revision: "dc7cdfe2ee4154fa7e30f5b51ca41bfa40174e68"
-  # Torch dtype: float16 for Tesla T4/V100; bfloat16 for A100/H100/L4
-  dtype: "float16"
+  # Torch dtype: float32 for FP16 AMP master weights; bfloat16 for A100/H100/L4
+  dtype: "float32"
 
 # ============================================================
 # Training Configuration — Phase 1 (CPT)
