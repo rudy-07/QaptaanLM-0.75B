@@ -68,22 +68,18 @@ def main():
     # Determine dataset path or Hugging Face Hub repo ID
     data_dir = args.data_dir or config["storage"]["processed_data"]["path"]
     
-    # Check if data_dir is a local directory or Kaggle input mount
     train_dataset = None
     data_path = Path(data_dir) if data_dir else None
 
-    # If data_dir not found directly, check standard Kaggle input locations
-    if data_path and not data_path.exists() and os.path.exists("/kaggle/input"):
-        possible_kaggle_paths = [
-            Path("/kaggle/input") / Path(data_dir).name.lower(),
-            Path("/kaggle/input") / Path(data_dir).name,
-            Path("/kaggle/input") / data_dir.replace("/", "-").lower(),
-        ]
-        for p in possible_kaggle_paths:
-            if p.exists():
-                data_path = p
-                logger.info(f"Found dataset at Kaggle mount: {data_path}")
-                break
+    # If the specified path does not exist, look across all /kaggle/input/ mounts
+    if (not data_path or not data_path.exists()) and os.path.exists("/kaggle/input"):
+        kaggle_root = Path("/kaggle/input")
+        # Check if there are any arrow or parquet files anywhere under /kaggle/input
+        kaggle_shards = list(kaggle_root.rglob("*.arrow")) or list(kaggle_root.rglob("*.parquet"))
+        if kaggle_shards:
+            # Pick the deepest common parent or the parent directory of shards
+            data_path = kaggle_shards[0].parent
+            logger.info(f"Auto-detected Kaggle dataset shards at: {data_path}")
 
     if data_path and data_path.exists():
         # 1. Try loading arrow/parquet files recursively
@@ -108,7 +104,8 @@ def main():
                 logger.warning(f"Could not load via load_from_disk: {e}")
 
     if train_dataset is None:
-        if data_dir and "/" in str(data_dir):
+        # Only treat as HF repo if it's in 'owner/dataset' format and NOT a filesystem path
+        if data_dir and "/" in str(data_dir) and not str(data_dir).startswith("/"):
             # Load directly from Hugging Face dataset repository
             hf_token = os.environ.get("HF_TOKEN")
             logger.info(f"Loading dataset directly from Hugging Face Hub: {data_dir}...")
@@ -116,7 +113,7 @@ def main():
             logger.info(f"✓ Loaded {len(train_dataset):,} packed training sequences from HF Hub.")
         else:
             logger.error(
-                f"No dataset found at '{data_dir}'. "
+                f"No dataset found at '{data_dir}' or in /kaggle/input. "
                 "Please verify the directory or provide a valid Kaggle path / HF Hub repo."
             )
             return
