@@ -56,10 +56,7 @@ from src.data.tokenize_and_pack import Tokenizer, create_packed_dataset
 from src.data.mixture import DatasetMixer
 from src.data.sharding import DatasetSharder
 
-from tqdm.auto import tqdm
-
 logger = logging.getLogger(__name__)
-
 
 def build_filtered_stream(
     loader: DatasetLoader,
@@ -105,10 +102,7 @@ def build_filtered_stream(
         logger.error(f"Unknown dataset: {dataset_name}")
         return
 
-    pbar = tqdm(desc=f"Streaming & Filtering [{dataset_name}]", unit="doc", leave=False)
-
     for sample in raw_stream:
-        pbar.update(1)
         # Apply filter
         filtered = filter_fn(sample)
         if filtered is None:
@@ -121,16 +115,21 @@ def build_filtered_stream(
             continue
 
         yielded += 1
-        pbar.set_postfix({"yielded": f"{yielded:,}", "pass_rate": f"{stats.pass_rate:.1%}"})
         yield filtered
 
         if max_samples and yielded >= max_samples:
             break
 
-    pbar.close()
+        # Log filter progress periodically
+        if yielded % 50_000 == 0:
+            logger.info(
+                f"[{dataset_name}] Streamed & yielded {yielded:,} documents | "
+                f"Pass rate: {stats.pass_rate:.1%}"
+            )
+
     # Final stats
     logger.info(
-        f"[{dataset_name}] Final: {yielded:,} samples yielded. "
+        f"[{dataset_name}] Stream finished: {yielded:,} documents yielded. "
         f"Filter stats: {stats.summary()}"
     )
     logger.info(f"[{dataset_name}] Dedup stats: {dedup.stats()}")
@@ -141,13 +140,7 @@ def process_data(
     datasets_filter: Optional[list] = None,
     output_dir: Optional[str] = None,
 ):
-    """Run the full data processing pipeline.
-
-    Args:
-        max_samples: Max samples per dataset (for testing).
-        datasets_filter: Only process these datasets (for testing).
-        output_dir: Override output directory.
-    """
+    """Run the full data processing pipeline."""
     start_time = time.time()
 
     # Load configs
@@ -160,7 +153,7 @@ def process_data(
     setup_logging(log_dir=log_dir, log_name="data_processing")
 
     logger.info("=" * 60)
-    logger.info("CPT Data Processing Pipeline")
+    logger.info("CPT Data Processing & Token Sharding Pipeline")
     logger.info("=" * 60)
     logger.info(f"Environment: {env}")
     logger.info(f"Max samples per dataset: {max_samples or 'unlimited'}")
@@ -168,24 +161,18 @@ def process_data(
     # Initialize components
     logger.info("\n--- Initializing components ---")
 
-    # Language detector
     lang_detector = LanguageDetector()
-
-    # Deduplication
     dedup_config = dataset_config.get("deduplication", {})
     dedup = DeduplicationPipeline(dedup_config)
 
-    # Tokenizer
     global_cfg = dataset_config.get("global", {})
     tokenizer_name = global_cfg.get("tokenizer", "Qwen/Qwen3.5-0.8B-Base")
     processing_cfg = dataset_config.get("processing", {})
     seq_length = processing_cfg.get("packing", {}).get("max_seq_length", 4096)
     tokenizer = Tokenizer(tokenizer_name, seq_length)
 
-    # Dataset loader
     loader = DatasetLoader(dataset_config)
 
-    # Determine which datasets to process
     datasets_cfg = dataset_config.get("datasets", {})
     if datasets_filter:
         datasets_to_process = {
@@ -213,15 +200,15 @@ def process_data(
         name: cfg.get("target_proportion", 0)
         for name, cfg in datasets_to_process.items()
     }
-    # Renormalize if processing subset
     total_prop = sum(proportions.values())
     if total_prop > 0 and abs(total_prop - 1.0) > 0.01:
         proportions = {k: v / total_prop for k, v in proportions.items()}
 
     target_tokens = global_cfg.get("target_total_tokens", 1_000_000_000)
     if max_samples:
-        # Scale down target tokens for testing
         target_tokens = min(target_tokens, max_samples * 500 * len(datasets_to_process))
+
+    target_sequences = max(1, target_tokens // seq_length)
 
     mixer = DatasetMixer(
         target_proportions=proportions,
@@ -229,25 +216,22 @@ def process_data(
         seed=global_cfg.get("seed", 42),
     )
 
-    # Mix streams
-    logger.info("\n--- Mixing and tokenizing ---")
+    logger.info("\n--- Mixing, Tokenizing & Sharding ---")
+    logger.info(f"Target Total Tokens:    {target_tokens:,}")
+    logger.info(f"Target Total Sequences: {target_sequences:,} (seq_len={seq_length})")
 
     def text_stream_from_mixed(mixed_stream):
-        """Extract text from mixed stream for packing."""
         for doc in mixed_stream:
             yield doc.get("text", "")
 
-    # Get FIM config
     fim_cfg = datasets_cfg.get("stack_v3_code", {}).get("fim", {})
     fim_rate = fim_cfg.get("rate", 0.5) if fim_cfg.get("enabled") else 0.0
 
-    # Create mixed stream
     mixed = mixer.mix(
         streams=filtered_streams,
         token_count_fn=tokenizer.count_tokens,
     )
 
-    # Tokenize and pack
     packed = create_packed_dataset(
         documents=text_stream_from_mixed(mixed),
         tokenizer=tokenizer,
@@ -256,32 +240,49 @@ def process_data(
         source_type="mixed",
     )
 
-    # Output
     if output_dir is None:
         output_dir = str(project_root / "data" / "processed")
 
     sharder = DatasetSharder(
         output_dir=output_dir,
-        shard_size_mb=processing_cfg.get("shard_size_mb", 500),
+        shard_size_mb=processing_cfg.get("shard_size_mb", 50),
         output_format=processing_cfg.get("output_format", "arrow"),
+        max_sequences_per_shard=2000,
     )
 
-    logger.info(f"Writing shards to {output_dir}")
+    logger.info(f"Writing shards to: {output_dir}")
 
-    pack_pbar = tqdm(desc="Packing & Sharding Sequences", unit="seq")
+    # Track progress
+    log_interval = 200  # Log every 200 sequences (~819,200 tokens)
 
     for i, sequence in enumerate(packed):
         sharder.add_sequence(sequence)
-        pack_pbar.update(1)
 
-        if (i + 1) % 1000 == 0:
+        current_seq = i + 1
+        current_tokens = current_seq * seq_length
+        progress_pct = (current_tokens / target_tokens) * 100
+
+        if current_seq % log_interval == 0 or current_tokens >= target_tokens:
             elapsed = time.time() - start_time
-            pack_pbar.set_postfix({
-                "tokens": f"{sharder._total_tokens:,}",
-                "shards": sharder._shard_index,
-            })
+            seq_per_sec = current_seq / max(elapsed, 1)
+            tok_per_sec = current_tokens / max(elapsed, 1)
 
-    pack_pbar.close()
+            remaining_tokens = max(0, target_tokens - current_tokens)
+            eta_sec = remaining_tokens / max(tok_per_sec, 1)
+            eta_hrs = eta_sec / 3600
+
+            logger.info(
+                f"[Sharding Progress {progress_pct:.1f}%] "
+                f"Sequences: {current_seq:,} / {target_sequences:,} | "
+                f"Tokens: {current_tokens:,} / {target_tokens:,} | "
+                f"Shards: {sharder._shard_index} | "
+                f"Speed: {seq_per_sec:.1f} seq/s ({tok_per_sec/1000:.0f}K tok/s) | "
+                f"ETA: {eta_hrs:.2f}h"
+            )
+
+        if current_tokens >= target_tokens:
+            logger.info(f"Reached target tokens ({target_tokens:,}). Finishing sharding.")
+            break
 
     # Finalize
     final_stats = sharder.finalize()

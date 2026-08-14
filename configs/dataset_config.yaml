@@ -357,7 +357,7 @@ processing:
   
   # Output format
   output_format: "arrow"  # arrow or parquet
-  shard_size_mb: 500
+  shard_size_mb: 50
   
   # Tokenization
   tokenization:

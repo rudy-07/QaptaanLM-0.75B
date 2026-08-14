@@ -24,9 +24,10 @@ class DatasetSharder:
     def __init__(
         self,
         output_dir: str,
-        shard_size_mb: int = 500,
+        shard_size_mb: int = 50,
         output_format: str = "arrow",
         resume: bool = True,
+        max_sequences_per_shard: int = 2000,
     ):
         """Initialize the sharder.
 
@@ -35,10 +36,12 @@ class DatasetSharder:
             shard_size_mb: Target size per shard in MB.
             output_format: "arrow" or "parquet".
             resume: Whether to resume from existing shards.
+            max_sequences_per_shard: Flush shard after this many sequences.
         """
         self.output_dir = Path(output_dir)
         self.shard_size_mb = shard_size_mb
         self.output_format = output_format
+        self.max_sequences_per_shard = max_sequences_per_shard
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # State
@@ -88,8 +91,11 @@ class DatasetSharder:
         estimated_bytes = seq_len * 4 * 3  # input_ids + labels + attention_mask
         self._current_shard_bytes += estimated_bytes
 
-        # Check if shard is full
-        if self._current_shard_bytes >= self.shard_size_mb * 1024 * 1024:
+        # Check if shard is full (by size or by sequence count)
+        if (
+            self._current_shard_bytes >= self.shard_size_mb * 1024 * 1024
+            or len(self._current_shard) >= self.max_sequences_per_shard
+        ):
             return self._flush_shard()
 
         return None

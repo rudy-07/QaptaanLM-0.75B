@@ -137,4 +137,4 @@ storage:
     # Can be local path, GDrive path, or HF dataset
     path: null  # Auto-resolved per environment
     format: "arrow"  # arrow or parquet
-    shard_size_mb: 500
+    shard_size_mb: 50
