@@ -330,6 +330,14 @@ def process_data(
         str(Path(output_dir) / "processing_report.json"),
     )
 
+    # Clean up active generator streaming threads to avoid Python shutdown race condition
+    try:
+        import gc
+        del packed, mixed, filtered_streams, loader
+        gc.collect()
+    except Exception:
+        pass
+
     return final_stats
 
 
@@ -375,3 +383,4 @@ if __name__ == "__main__":
         target_tokens_override=args.target_tokens,
         disable_minhash=args.disable_minhash,
     )
+    sys.exit(0)
