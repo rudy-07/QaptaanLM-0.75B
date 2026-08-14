@@ -140,7 +140,7 @@ class DetailedLoggingCallback(TrainerCallback):
     """Enhanced logging with per-step details."""
 
     def on_log(self, args, state, control, logs=None, **kwargs):
-        if logs is None:
+        if logs is None or not state.is_world_process_zero:
             return
 
         # Add learning rate to logs if available

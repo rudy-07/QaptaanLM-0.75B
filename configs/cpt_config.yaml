@@ -13,8 +13,8 @@ model:
   trust_remote_code: true
   # Model revision for reproducibility
   revision: "dc7cdfe2ee4154fa7e30f5b51ca41bfa40174e68"
-  # Torch dtype
-  dtype: "bfloat16"
+  # Torch dtype: float16 for Tesla T4/V100; bfloat16 for A100/H100/L4
+  dtype: "float16"
 
 # ============================================================
 # Training Configuration — Phase 1 (CPT)
@@ -26,14 +26,14 @@ training:
   # Total target tokens
   target_tokens: 1_000_000_000  # 1B tokens
   
-  # Sequence length
-  max_seq_length: 4096
+  # Sequence length (2048 avoids 248k-vocab logits OOM and speeds up training 4x on T4)
+  max_seq_length: 2048
   
   # Batch sizes
   per_device_train_batch_size: 1
   per_device_eval_batch_size: 1
-  gradient_accumulation_steps: 32
-  # Effective batch = 1 * 32 * n_gpus (e.g. 64 sequences across 2 GPUs = 262,144 tokens per step)
+  gradient_accumulation_steps: 8
+  # Effective batch = 1 * 8 * n_gpus (e.g. 16 sequences across 2 GPUs = 32,768 tokens/step)
   
   # Learning rate
   learning_rate: 2.0e-5
@@ -49,11 +49,12 @@ training:
   max_steps: -1  # -1 means compute from target_tokens
   
   # Precision and memory
-  bf16: true
-  fp16: false
+  # Note: Tesla T4 lacks hardware BF16 Tensor Cores. Always use fp16=True on T4.
+  bf16: false
+  fp16: true
   gradient_checkpointing: true
   
-  # Optimizer
+  # Optimizer: paged_adamw_8bit is auto-enabled on <=16GB GPUs
   optim: "adamw_torch"
   adam_beta1: 0.9
   adam_beta2: 0.95
@@ -75,10 +76,9 @@ training:
   eval_strategy: "steps"
   eval_steps: 200
   
-  # Dataloader
-  dataloader_num_workers: 4
+  # Dataloader (0 workers prevents CPU RAM exhaustion and multi-worker IPC deadlocks in Colab/Kaggle)
+  dataloader_num_workers: 0
   dataloader_pin_memory: true
-  dataloader_prefetch_factor: 2
   
   # Seed
   seed: 42
@@ -95,23 +95,25 @@ environment:
   # Colab-specific
   colab:
     per_device_train_batch_size: 1
-    gradient_accumulation_steps: 32
-    max_seq_length: 4096
-    # T4: 16GB (micro_batch=1), L4: 24GB, A100: 40/80GB
+    gradient_accumulation_steps: 8
+    max_seq_length: 2048
+    dataloader_num_workers: 0
+    # T4: 16GB (micro_batch=1, fp16=True), L4: 24GB, A100: 40/80GB (bf16=True)
     
   # Kaggle-specific
   kaggle:
     per_device_train_batch_size: 1
-    gradient_accumulation_steps: 32
-    max_seq_length: 4096
-    # T4x2: 2x16GB — auto-reduced to seq_len=2048 at runtime to avoid OOM from 248k-vocab logits tensor
-    # grad_accum is auto-doubled to 64 to preserve ~262k tokens/step
+    gradient_accumulation_steps: 8
+    max_seq_length: 2048
+    dataloader_num_workers: 0
+    # T4x2: 2x16GB — micro_batch=1, grad_accum=8 across 2 GPUs = ~32k tokens/step
 
   # Local (for testing only)
   local:
     per_device_train_batch_size: 1
     gradient_accumulation_steps: 1
     max_seq_length: 512
+    dataloader_num_workers: 0
     max_steps: 10
 
 # ============================================================

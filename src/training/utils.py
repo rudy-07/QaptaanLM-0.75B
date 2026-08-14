@@ -38,7 +38,12 @@ def detect_hardware() -> Dict[str, Any]:
         info["gpu_memory_gb"] = round(
             torch.cuda.get_device_properties(0).total_memory / (1024**3), 1
         )
-        info["bf16_support"] = torch.cuda.is_bf16_supported()
+        # torch.cuda.is_bf16_supported() returns True on T4 (compute capability 7.5)
+        # because PyTorch CAN emulate BF16, but it runs 5-10x slower than FP16 since
+        # T4 lacks hardware BF16 Tensor Cores. Only GPUs with compute capability >= 8.0
+        # (A100, H100, L4, RTX 30xx/40xx) have native BF16 Tensor Cores.
+        cc_major = torch.cuda.get_device_properties(0).major
+        info["bf16_support"] = cc_major >= 8
 
         logger.info(
             f"GPU detected: {info['gpu_name']} "
@@ -129,8 +134,10 @@ def auto_configure_batch_size(
         available = max(0.0, gpu_memory_gb - base_memory_gb)
         micro_batch = max(1, int(available / mem_per_sample_gb))
 
-    # Target effective global batch size: ~64 sequences in original tokens, adjusted for seq_length ratio
-    target_effective_sequences = 64
+    # Target effective global batch size: ~16 sequences
+    # For 0.8B models, 16-32 sequences is standard (Chinchilla/GPT-3 small).
+    # Larger batches (64+) waste GPU time on grad_accum and are unnecessary for CPT.
+    target_effective_sequences = 16
     # If seq_length was halved, double grad_accum to preserve same tokens/step
     seq_ratio = seq_length // safe_seq_length  # e.g. 4096//2048 = 2
     adjusted_target = target_effective_sequences * seq_ratio

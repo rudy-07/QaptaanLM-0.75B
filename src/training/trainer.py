@@ -89,9 +89,11 @@ class CPTTrainer:
         else:
             model_dtype = model_cfg.get("dtype", "bfloat16")
 
-        # Set safe dataloader workers for multi-GPU on 4-vCPU environments
-        if self.hardware.get("gpu_count", 1) > 1 and self.env in ("kaggle", "colab"):
-            train_cfg["dataloader_num_workers"] = 2
+        # Use 0 dataloader workers in Colab/Kaggle containers to prevent shared-memory / CPU RAM exhaustion
+        if self.env in ("kaggle", "colab"):
+            train_cfg["dataloader_num_workers"] = train_cfg.get("dataloader_num_workers", 0)
+        else:
+            train_cfg["dataloader_num_workers"] = train_cfg.get("dataloader_num_workers", 0)
 
         # Load model and tokenizer
         self.model, self.tokenizer = load_model_for_training(
@@ -303,6 +305,11 @@ class CPTTrainer:
         resume_path = self.config["training"].get("resume_from_checkpoint")
         if resume_path and Path(resume_path).exists():
             logger.info(f"Resuming from checkpoint: {resume_path}")
+
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         logger.info("Starting CPT training...")
         self.trainer.train(resume_from_checkpoint=resume_path)
