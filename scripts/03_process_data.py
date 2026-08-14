@@ -156,6 +156,7 @@ def process_data(
     output_dir: Optional[str] = None,
     target_tokens_override: Optional[int] = None,
     disable_minhash: bool = False,
+    shard_offset: int = 0,
 ):
     """Run the full data processing pipeline."""
     start_time = time.time()
@@ -181,6 +182,7 @@ def process_data(
     logger.info(f"Environment: {env}")
     logger.info(f"Target Total Tokens: {target_tokens:,}")
     logger.info(f"Max samples per dataset: {max_samples or 'unlimited'}")
+    logger.info(f"Shard numbering offset: {shard_offset}")
 
     # Initialize components
     logger.info("\n--- Initializing components ---")
@@ -271,6 +273,7 @@ def process_data(
         shard_size_mb=processing_cfg.get("shard_size_mb", 50),
         output_format=processing_cfg.get("output_format", "arrow"),
         max_sequences_per_shard=2000,
+        start_shard_index=shard_offset,
     )
 
     logger.info(f"Writing shards to: {output_dir}")
@@ -374,6 +377,12 @@ if __name__ == "__main__":
         action="store_true",
         help="Force disable MinHash near-deduplication for maximum speed",
     )
+    parser.add_argument(
+        "--shard-offset",
+        type=int,
+        default=0,
+        help="Starting index for shard files (e.g. 115 for part 2)",
+    )
     args = parser.parse_args()
 
     process_data(
@@ -382,5 +391,6 @@ if __name__ == "__main__":
         output_dir=args.output_dir,
         target_tokens_override=args.target_tokens,
         disable_minhash=args.disable_minhash,
+        shard_offset=args.shard_offset,
     )
     sys.exit(0)

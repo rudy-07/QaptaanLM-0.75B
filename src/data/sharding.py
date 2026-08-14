@@ -28,6 +28,7 @@ class DatasetSharder:
         output_format: str = "arrow",
         resume: bool = True,
         max_sequences_per_shard: int = 2000,
+        start_shard_index: int = 0,
     ):
         """Initialize the sharder.
 
@@ -37,6 +38,7 @@ class DatasetSharder:
             output_format: "arrow" or "parquet".
             resume: Whether to resume from existing shards.
             max_sequences_per_shard: Flush shard after this many sequences.
+            start_shard_index: Starting index for shard numbering.
         """
         self.output_dir = Path(output_dir)
         self.shard_size_mb = shard_size_mb
@@ -47,13 +49,13 @@ class DatasetSharder:
         # State
         self._current_shard: List[Dict[str, Any]] = []
         self._current_shard_bytes = 0
-        self._shard_index = 0
+        self._shard_index = start_shard_index
         self._total_sequences = 0
         self._total_tokens = 0
         self._shard_metadata: List[Dict[str, Any]] = []
 
         # Resume from existing shards
-        if resume:
+        if resume and (self.output_dir / "manifest.json").exists():
             self._resume_from_manifest()
 
     def _resume_from_manifest(self):
