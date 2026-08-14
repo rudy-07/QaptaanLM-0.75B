@@ -145,10 +145,14 @@ class DetailedLoggingCallback(TrainerCallback):
 
         # Add learning rate to logs if available
         if "learning_rate" in logs:
+            loss_val = logs.get("loss")
+            loss_str = f"{loss_val:.4f}" if isinstance(loss_val, (int, float)) else str(loss_val or "N/A")
+            lr_val = logs.get("learning_rate")
+            lr_str = f"{lr_val:.2e}" if isinstance(lr_val, (int, float)) else str(lr_val or "0")
             logger.info(
                 f"Step {state.global_step}: "
-                f"loss={logs.get('loss', 'N/A'):.4f}, "
-                f"lr={logs.get('learning_rate', 0):.2e}, "
+                f"loss={loss_str}, "
+                f"lr={lr_str}, "
                 f"tokens={logs.get('tokens_processed', 'N/A')}, "
                 f"progress={logs.get('token_progress', 'N/A')}, "
                 f"ETA={logs.get('eta_hours', 'N/A')}h"

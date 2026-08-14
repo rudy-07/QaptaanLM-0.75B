@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 from transformers import AutoTokenizer
+from tqdm.auto import tqdm
 
 logger = logging.getLogger(__name__)
 

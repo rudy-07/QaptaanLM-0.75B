@@ -85,7 +85,9 @@ class CPTTrainer:
         logger.info(f"Setup complete in {self.env} environment")
 
     def _build_training_args(self) -> TrainingArguments:
-        """Build TrainingArguments from config."""
+        """Build TrainingArguments dynamically and safely across all transformers versions."""
+        import inspect
+
         train_cfg = self.config["training"]
 
         # Compute max_steps from target tokens if not explicitly set
@@ -104,44 +106,69 @@ class CPTTrainer:
                 f"tokens_per_step={tokens_per_step:,}"
             )
 
-        args = TrainingArguments(
-            output_dir=train_cfg["output_dir"],
-            max_steps=max_steps,
-            per_device_train_batch_size=train_cfg["per_device_train_batch_size"],
-            per_device_eval_batch_size=train_cfg.get(
-                "per_device_eval_batch_size", 2
-            ),
-            gradient_accumulation_steps=train_cfg["gradient_accumulation_steps"],
-            learning_rate=train_cfg["learning_rate"],
-            lr_scheduler_type=train_cfg.get("lr_scheduler_type", "cosine"),
-            warmup_ratio=train_cfg.get("warmup_ratio", 0.02),
-            weight_decay=train_cfg.get("weight_decay", 0.01),
-            max_grad_norm=train_cfg.get("max_grad_norm", 1.0),
-            bf16=train_cfg.get("bf16", True),
-            fp16=train_cfg.get("fp16", False),
-            gradient_checkpointing=train_cfg.get("gradient_checkpointing", True),
-            optim=train_cfg.get("optim", "adamw_torch"),
-            adam_beta1=train_cfg.get("adam_beta1", 0.9),
-            adam_beta2=train_cfg.get("adam_beta2", 0.95),
-            adam_epsilon=train_cfg.get("adam_epsilon", 1e-8),
-            logging_steps=train_cfg.get("logging_steps", 10),
-            logging_first_step=train_cfg.get("logging_first_step", True),
-            save_strategy=train_cfg.get("save_strategy", "steps"),
-            save_steps=train_cfg.get("save_steps", 200),
-            save_total_limit=train_cfg.get("save_total_limit", 5),
-            eval_strategy=train_cfg.get("eval_strategy", "steps"),
-            eval_steps=train_cfg.get("eval_steps", 200),
-            dataloader_num_workers=train_cfg.get("dataloader_num_workers", 4),
-            dataloader_pin_memory=train_cfg.get("dataloader_pin_memory", True),
-            seed=train_cfg.get("seed", 42),
-            data_seed=train_cfg.get("data_seed", 42),
-            report_to=train_cfg.get("report_to", "none"),
-            run_name=train_cfg.get("run_name", "qwen35-0.8b-cpt"),
-            resume_from_checkpoint=train_cfg.get("resume_from_checkpoint"),
-            remove_unused_columns=False,
-        )
+        # Calculate warmup steps
+        warmup_ratio = train_cfg.get("warmup_ratio", 0.02)
+        warmup_steps = train_cfg.get("warmup_steps")
+        if warmup_steps is None and warmup_ratio is not None:
+            if max_steps and max_steps > 0:
+                warmup_steps = max(1, int(max_steps * warmup_ratio))
+            else:
+                warmup_steps = 100
 
-        return args
+        candidate_kwargs = {
+            "output_dir": train_cfg["output_dir"],
+            "max_steps": max_steps,
+            "per_device_train_batch_size": train_cfg["per_device_train_batch_size"],
+            "per_device_eval_batch_size": train_cfg.get("per_device_eval_batch_size", 2),
+            "gradient_accumulation_steps": train_cfg["gradient_accumulation_steps"],
+            "learning_rate": train_cfg["learning_rate"],
+            "lr_scheduler_type": train_cfg.get("lr_scheduler_type", "cosine"),
+            "weight_decay": train_cfg.get("weight_decay", 0.01),
+            "max_grad_norm": train_cfg.get("max_grad_norm", 1.0),
+            "bf16": train_cfg.get("bf16", True),
+            "fp16": train_cfg.get("fp16", False),
+            "gradient_checkpointing": train_cfg.get("gradient_checkpointing", True),
+            "optim": train_cfg.get("optim", "adamw_torch"),
+            "adam_beta1": train_cfg.get("adam_beta1", 0.9),
+            "adam_beta2": train_cfg.get("adam_beta2", 0.95),
+            "adam_epsilon": train_cfg.get("adam_epsilon", 1e-8),
+            "logging_steps": train_cfg.get("logging_steps", 10),
+            "logging_first_step": train_cfg.get("logging_first_step", True),
+            "save_strategy": train_cfg.get("save_strategy", "steps"),
+            "save_steps": train_cfg.get("save_steps", 200),
+            "save_total_limit": train_cfg.get("save_total_limit", 5),
+            "dataloader_num_workers": train_cfg.get("dataloader_num_workers", 4),
+            "dataloader_pin_memory": train_cfg.get("dataloader_pin_memory", True),
+            "seed": train_cfg.get("seed", 42),
+            "data_seed": train_cfg.get("data_seed", 42),
+            "report_to": train_cfg.get("report_to", "none"),
+            "run_name": train_cfg.get("run_name", "qwen35-0.8b-cpt"),
+            "remove_unused_columns": False,
+        }
+
+        # Inspect parameters supported by installed transformers version
+        sig = inspect.signature(TrainingArguments.__init__)
+        valid_params = set(sig.parameters.keys())
+
+        # Set warmup (warmup_steps is universal; warmup_ratio if available)
+        if "warmup_steps" in valid_params:
+            candidate_kwargs["warmup_steps"] = warmup_steps
+        elif "warmup_ratio" in valid_params:
+            candidate_kwargs["warmup_ratio"] = warmup_ratio
+
+        # Handle eval strategy parameter name difference (eval_strategy vs evaluation_strategy)
+        eval_strat = train_cfg.get("eval_strategy") or train_cfg.get("evaluation_strategy", "steps")
+        eval_st = train_cfg.get("eval_steps", 200)
+        if "eval_strategy" in valid_params:
+            candidate_kwargs["eval_strategy"] = eval_strat
+            candidate_kwargs["eval_steps"] = eval_st
+        elif "evaluation_strategy" in valid_params:
+            candidate_kwargs["evaluation_strategy"] = eval_strat
+            candidate_kwargs["eval_steps"] = eval_st
+
+        # Filter strictly to valid TrainingArguments parameters to avoid any TypeError
+        filtered_kwargs = {k: v for k, v in candidate_kwargs.items() if k in valid_params and v is not None}
+        return TrainingArguments(**filtered_kwargs)
 
     def _build_callbacks(self) -> List:
         """Build training callbacks."""
