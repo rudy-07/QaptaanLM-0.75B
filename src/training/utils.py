@@ -112,6 +112,7 @@ def load_model_for_training(
     dtype: str = "bfloat16",
     gradient_checkpointing: bool = True,
     strip_vision: bool = True,
+    trust_remote_code: bool = True,
 ) -> Tuple[Any, Any]:
     """Load model and tokenizer for CPT training.
 
@@ -125,6 +126,7 @@ def load_model_for_training(
         dtype: Torch dtype string.
         gradient_checkpointing: Whether to enable gradient checkpointing.
         strip_vision: Whether to load text-only model (strip vision).
+        trust_remote_code: Whether to allow remote code from HF Hub.
 
     Returns:
         Tuple of (model, tokenizer).
@@ -134,7 +136,7 @@ def load_model_for_training(
     # Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(
         model_name_or_path,
-        trust_remote_code=False,
+        trust_remote_code=trust_remote_code,
     )
 
     # Determine torch dtype
@@ -155,7 +157,7 @@ def load_model_for_training(
             model = Qwen3_5ForCausalLM.from_pretrained(
                 model_name_or_path,
                 torch_dtype=torch_dtype,
-                trust_remote_code=False,
+                trust_remote_code=trust_remote_code,
             )
             logger.info(
                 f"✓ Loaded text-only model. "
@@ -171,7 +173,7 @@ def load_model_for_training(
             model = AutoModelForCausalLM.from_pretrained(
                 model_name_or_path,
                 torch_dtype=torch_dtype,
-                trust_remote_code=False,
+                trust_remote_code=trust_remote_code,
             )
     else:
         from transformers import AutoModelForCausalLM
@@ -179,7 +181,7 @@ def load_model_for_training(
         model = AutoModelForCausalLM.from_pretrained(
             model_name_or_path,
             torch_dtype=torch_dtype,
-            trust_remote_code=False,
+            trust_remote_code=trust_remote_code,
         )
 
     # Enable gradient checkpointing for memory efficiency

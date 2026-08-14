@@ -10,7 +10,7 @@ model:
   model_class: "Qwen3_5ForCausalLM"
   tokenizer_class: "auto"
   # Whether to use trust_remote_code
-  trust_remote_code: false
+  trust_remote_code: true
   # Model revision for reproducibility
   revision: "dc7cdfe2ee4154fa7e30f5b51ca41bfa40174e68"
   # Torch dtype

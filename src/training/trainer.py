@@ -80,6 +80,7 @@ class CPTTrainer:
             dtype=model_cfg.get("dtype", "bfloat16"),
             gradient_checkpointing=train_cfg.get("gradient_checkpointing", True),
             strip_vision=True,
+            trust_remote_code=model_cfg.get("trust_remote_code", True),
         )
 
         logger.info(f"Setup complete in {self.env} environment")
