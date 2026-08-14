@@ -77,16 +77,32 @@ class CPTTrainer:
                 train_cfg["gradient_accumulation_steps"] = grad_accum
                 train_cfg["max_seq_length"] = safe_seq_length
 
+        # Auto-configure precision based on hardware capability
+        # Tesla T4/V100/P100 lack hardware BF16 Tensor Cores and are 5-10x slower on bf16.
+        # A100/H100/L4 have native BF16 Tensor Cores.
+        has_bf16 = bool(self.hardware.get("bf16_support", False))
+        if not has_bf16:
+            logger.info("GPU lacks native BF16 Tensor Cores (e.g. Tesla T4). Auto-switching to FP16 for 5-10x faster training.")
+            train_cfg["bf16"] = False
+            train_cfg["fp16"] = True
+            model_dtype = "float16"
+        else:
+            model_dtype = model_cfg.get("dtype", "bfloat16")
+
+        # Set safe dataloader workers for multi-GPU on 4-vCPU environments
+        if self.hardware.get("gpu_count", 1) > 1 and self.env in ("kaggle", "colab"):
+            train_cfg["dataloader_num_workers"] = 2
+
         # Load model and tokenizer
         self.model, self.tokenizer = load_model_for_training(
             model_name_or_path=model_cfg["name_or_path"],
-            dtype=model_cfg.get("dtype", "bfloat16"),
+            dtype=model_dtype,
             gradient_checkpointing=train_cfg.get("gradient_checkpointing", True),
             strip_vision=True,
             trust_remote_code=model_cfg.get("trust_remote_code", True),
         )
 
-        logger.info(f"Setup complete in {self.env} environment")
+        logger.info(f"Setup complete in {self.env} environment (dtype={model_dtype})")
 
     def _build_training_args(self, eval_dataset: Optional[Dataset] = None) -> TrainingArguments:
         """Build TrainingArguments dynamically and safely across all transformers versions."""
@@ -147,8 +163,8 @@ class CPTTrainer:
             "lr_scheduler_type": train_cfg.get("lr_scheduler_type", "cosine"),
             "weight_decay": train_cfg.get("weight_decay", 0.01),
             "max_grad_norm": train_cfg.get("max_grad_norm", 1.0),
-            "bf16": train_cfg.get("bf16", True),
-            "fp16": train_cfg.get("fp16", False),
+            "bf16": train_cfg.get("bf16", False),
+            "fp16": train_cfg.get("fp16", True),
             "gradient_checkpointing": train_cfg.get("gradient_checkpointing", True),
             "optim": optim_name,
             "adam_beta1": train_cfg.get("adam_beta1", 0.9),
@@ -159,7 +175,7 @@ class CPTTrainer:
             "save_strategy": train_cfg.get("save_strategy", "steps"),
             "save_steps": train_cfg.get("save_steps", 200),
             "save_total_limit": train_cfg.get("save_total_limit", 5),
-            "dataloader_num_workers": train_cfg.get("dataloader_num_workers", 4),
+            "dataloader_num_workers": train_cfg.get("dataloader_num_workers", 2),
             "dataloader_pin_memory": train_cfg.get("dataloader_pin_memory", True),
             "seed": train_cfg.get("seed", 42),
             "data_seed": train_cfg.get("data_seed", 42),
@@ -256,32 +272,23 @@ class CPTTrainer:
         train_cfg = self.config["training"]
         seq_len = train_cfg["max_seq_length"]
 
-        # Truncate sequences if dataset was packed at a longer length than our safe seq_length
-        # (e.g., packed at 4096 but training at 2048 on T4 to avoid OOM from logits tensor)
-        sample_keys = train_dataset.column_names
-        sample_len = len(train_dataset[0].get("input_ids", []))
-        if sample_len > seq_len:
-            logger.info(
-                f"Truncating dataset sequences from {sample_len} to {seq_len} tokens "
-                f"(VRAM constraint). Effective dataset doubles from {len(train_dataset):,} "
-                f"to ~{len(train_dataset) * (sample_len // seq_len):,} unique windows."
-            )
-            train_dataset = train_dataset.map(
-                lambda batch: {k: [v[:seq_len] for v in batch[k]] if k in ("input_ids", "attention_mask", "labels") else batch[k] for k in batch},
-                batched=True,
-                batch_size=1000,
-                num_proc=4,
-                desc="Truncating sequences",
-            )
-
         training_args = self._build_training_args(eval_dataset=eval_dataset)
         callbacks = self._build_callbacks()
 
-        # Data collator (simple — data is already tokenized and packed)
-        data_collator = DataCollatorForLanguageModeling(
-            tokenizer=self.tokenizer,
-            mlm=False,  # Causal LM
-        )
+        # Zero-copy dynamic slicing collator: slices sequences to seq_len on the fly
+        # (Zero startup waiting time, instantly ready)
+        def data_collator(features):
+            batch = {}
+            for k in ("input_ids", "attention_mask"):
+                if k in features[0]:
+                    tensors = [torch.as_tensor(f[k][:seq_len], dtype=torch.long) for f in features]
+                    batch[k] = torch.stack(tensors)
+            if "labels" in features[0]:
+                tensors = [torch.as_tensor(f["labels"][:seq_len], dtype=torch.long) for f in features]
+                batch["labels"] = torch.stack(tensors)
+            elif "input_ids" in batch:
+                batch["labels"] = batch["input_ids"].clone()
+            return batch
 
         self.trainer = Trainer(
             model=self.model,
