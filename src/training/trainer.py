@@ -85,7 +85,7 @@ class CPTTrainer:
 
         logger.info(f"Setup complete in {self.env} environment")
 
-    def _build_training_args(self) -> TrainingArguments:
+    def _build_training_args(self, eval_dataset: Optional[Dataset] = None) -> TrainingArguments:
         """Build TrainingArguments dynamically and safely across all transformers versions."""
         import inspect
 
@@ -158,7 +158,11 @@ class CPTTrainer:
             candidate_kwargs["warmup_ratio"] = warmup_ratio
 
         # Handle eval strategy parameter name difference (eval_strategy vs evaluation_strategy)
-        eval_strat = train_cfg.get("eval_strategy") or train_cfg.get("evaluation_strategy", "steps")
+        if eval_dataset is None:
+            eval_strat = "no"
+        else:
+            eval_strat = train_cfg.get("eval_strategy") or train_cfg.get("evaluation_strategy", "steps")
+
         eval_st = train_cfg.get("eval_steps", 200)
         if "eval_strategy" in valid_params:
             candidate_kwargs["eval_strategy"] = eval_strat
@@ -228,7 +232,7 @@ class CPTTrainer:
         if self.model is None:
             self.setup()
 
-        training_args = self._build_training_args()
+        training_args = self._build_training_args(eval_dataset=eval_dataset)
         callbacks = self._build_callbacks()
 
         # Data collator (simple — data is already tokenized and packed)
