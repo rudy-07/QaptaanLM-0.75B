@@ -96,19 +96,20 @@ def auto_configure_batch_size(
     """
     safe_seq_length = seq_length
 
-    # On ≤16GB GPUs, cap sequence length to 2048 to halve the logits tensor
-    # 4096 × 248k × 4B = 3.8GB logits; during backward, logits + grads = ~7.6GB
-    # 2048 × 248k × 4B = 1.9GB logits; during backward, logits + grads = ~3.8GB — fits!
-    if gpu_memory_gb <= 16.5 and seq_length > 2048:
+    # On ≤16GB GPUs (like Tesla T4 14.6GB), cap sequence length to 1024 because the 248,320-vocab
+    # cross_entropy calculation allocates 3 separate tensors (logits, shift_logits, loss buffer):
+    # - At 2048: 3 × (2048 × 248k × 4B) = ~5.7GB VRAM spike -> causes CUDA OOM during loss.
+    # - At 1024: 3 × (1024 × 248k × 4B) = ~2.8GB VRAM spike -> fits with ~3.7GB free headroom!
+    if gpu_memory_gb <= 16.5 and seq_length > 1024:
         logger.warning(
             f"GPU has only {gpu_memory_gb}GB VRAM. Reducing max_seq_length from "
-            f"{seq_length} to 2048 to avoid OOM from 248k-vocab logits tensor "
-            f"(saves ~{((seq_length - 2048) * vocab_size * 4) / (1024**3):.1f}GB per sample)"
+            f"{seq_length} to 1024 to prevent CUDA OOM from the 248k-vocabulary cross-entropy buffers "
+            f"(saves ~{((seq_length - 1024) * vocab_size * 4 * 3) / (1024**3):.1f}GB VRAM during loss computation)"
         )
-        safe_seq_length = 2048
+        safe_seq_length = 1024
 
-    # Base memory: model (2B/param) + grads (2B/param) + AdamW states (8B/param) + CUDA/NCCL overhead (~1.5GB)
-    base_memory_gb = (model_params_b * 12.0) + 1.5  # ~11.1 GB for 0.8B
+    # Base memory: model (4B/param FP32) + grads (4B/param FP32) + 8-bit AdamW (2B/param) + CUDA/NCCL overhead (~1.5GB)
+    base_memory_gb = (model_params_b * 10.0) + 1.5  # ~9.5 GB for 0.8B FP32 master weights
 
     # Per-sample peak memory at loss computation:
     # - Logits in fp32: safe_seq_length * vocab_size * 4 bytes
