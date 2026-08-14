@@ -66,7 +66,7 @@ class CPTTrainer:
         # Auto-configure batch size if GPU detected
         if self.hardware["gpu_memory_gb"]:
             n_gpus = max(self.hardware.get("gpu_count", 1), 1)
-            micro_batch, grad_accum = auto_configure_batch_size(
+            micro_batch, grad_accum, safe_seq_length = auto_configure_batch_size(
                 gpu_memory_gb=self.hardware["gpu_memory_gb"],
                 seq_length=train_cfg["max_seq_length"],
                 gpu_count=n_gpus,
@@ -75,6 +75,7 @@ class CPTTrainer:
             if self.env != "local":
                 train_cfg["per_device_train_batch_size"] = micro_batch
                 train_cfg["gradient_accumulation_steps"] = grad_accum
+                train_cfg["max_seq_length"] = safe_seq_length
 
         # Load model and tokenizer
         self.model, self.tokenizer = load_model_for_training(
@@ -251,6 +252,27 @@ class CPTTrainer:
         """
         if self.model is None:
             self.setup()
+
+        train_cfg = self.config["training"]
+        seq_len = train_cfg["max_seq_length"]
+
+        # Truncate sequences if dataset was packed at a longer length than our safe seq_length
+        # (e.g., packed at 4096 but training at 2048 on T4 to avoid OOM from logits tensor)
+        sample_keys = train_dataset.column_names
+        sample_len = len(train_dataset[0].get("input_ids", []))
+        if sample_len > seq_len:
+            logger.info(
+                f"Truncating dataset sequences from {sample_len} to {seq_len} tokens "
+                f"(VRAM constraint). Effective dataset doubles from {len(train_dataset):,} "
+                f"to ~{len(train_dataset) * (sample_len // seq_len):,} unique windows."
+            )
+            train_dataset = train_dataset.map(
+                lambda batch: {k: [v[:seq_len] for v in batch[k]] if k in ("input_ids", "attention_mask", "labels") else batch[k] for k in batch},
+                batched=True,
+                batch_size=1000,
+                num_proc=4,
+                desc="Truncating sequences",
+            )
 
         training_args = self._build_training_args(eval_dataset=eval_dataset)
         callbacks = self._build_callbacks()

@@ -69,35 +69,52 @@ def auto_configure_batch_size(
     model_params_b: float = 0.8,
     gpu_count: int = 1,
     vocab_size: int = 248320,
-) -> Tuple[int, int]:
-    """Automatically determine safe micro batch size and gradient accumulation.
+) -> Tuple[int, int, int]:
+    """Automatically determine safe micro batch size, gradient accumulation, and sequence length.
 
     Accounts for model parameters, optimizer states (AdamW), gradient checkpointing,
     and the large vocabulary (248k) logits tensor in float32 during loss calculation.
 
+    On memory-constrained GPUs (≤16GB like T4), the sequence length is reduced from
+    4096 to 2048 because the logits tensor alone (seq_len × 248k × 4 bytes fp32)
+    costs ~3.8GB at 4096 — too large for backward pass on 14.6GB T4.
+
     Args:
         gpu_memory_gb: Available GPU memory in GB.
-        seq_length: Sequence length.
+        seq_length: Requested sequence length.
         model_params_b: Model parameters in billions.
         gpu_count: Number of GPUs available.
         vocab_size: Model vocabulary size (default 248,320 for Qwen3.5).
 
     Returns:
-        Tuple of (micro_batch_size, gradient_accumulation_steps).
+        Tuple of (micro_batch_size, gradient_accumulation_steps, safe_seq_length).
     """
+    safe_seq_length = seq_length
+
+    # On ≤16GB GPUs, cap sequence length to 2048 to halve the logits tensor
+    # 4096 × 248k × 4B = 3.8GB logits; during backward, logits + grads = ~7.6GB
+    # 2048 × 248k × 4B = 1.9GB logits; during backward, logits + grads = ~3.8GB — fits!
+    if gpu_memory_gb <= 16.5 and seq_length > 2048:
+        logger.warning(
+            f"GPU has only {gpu_memory_gb}GB VRAM. Reducing max_seq_length from "
+            f"{seq_length} to 2048 to avoid OOM from 248k-vocab logits tensor "
+            f"(saves ~{((seq_length - 2048) * vocab_size * 4) / (1024**3):.1f}GB per sample)"
+        )
+        safe_seq_length = 2048
+
     # Base memory: model (2B/param) + grads (2B/param) + AdamW states (8B/param) + CUDA/NCCL overhead (~1.5GB)
     base_memory_gb = (model_params_b * 12.0) + 1.5  # ~11.1 GB for 0.8B
 
     # Per-sample peak memory at loss computation:
-    # - Logits in fp32: seq_length * vocab_size * 4 bytes
+    # - Logits in fp32: safe_seq_length * vocab_size * 4 bytes
     # - Activations with gradient checkpointing: ~0.5 GB
-    logits_gb = (seq_length * vocab_size * 4) / (1024**3)
-    activation_gb = (seq_length / 4096) * 0.5
+    logits_gb = (safe_seq_length * vocab_size * 4) / (1024**3)
+    activation_gb = (safe_seq_length / 4096) * 0.5
     mem_per_sample_gb = logits_gb + activation_gb
 
     # Strict safety cap based on total GPU VRAM
     if gpu_memory_gb <= 16.5:
-        # 16GB GPUs (T4, P100, V100-16GB): Must use micro_batch=1 due to 3.8GB logits tensor
+        # 16GB GPUs (T4, P100, V100-16GB): Must use micro_batch=1
         micro_batch = 1
     elif gpu_memory_gb <= 24.5:
         # 24GB GPUs (L4, RTX 3090, RTX 4090, A10G): max micro_batch=2
@@ -112,18 +129,23 @@ def auto_configure_batch_size(
         available = max(0.0, gpu_memory_gb - base_memory_gb)
         micro_batch = max(1, int(available / mem_per_sample_gb))
 
-    # Target effective global batch size of ~64 to 128 sequences (256k-512k tokens per step)
+    # Target effective global batch size: ~64 sequences in original tokens, adjusted for seq_length ratio
     target_effective_sequences = 64
+    # If seq_length was halved, double grad_accum to preserve same tokens/step
+    seq_ratio = seq_length // safe_seq_length  # e.g. 4096//2048 = 2
+    adjusted_target = target_effective_sequences * seq_ratio
     total_micro_batch = micro_batch * max(1, gpu_count)
-    grad_accum = max(1, target_effective_sequences // total_micro_batch)
+    grad_accum = max(1, adjusted_target // total_micro_batch)
 
+    effective_tokens_per_step = safe_seq_length * micro_batch * grad_accum * max(1, gpu_count)
     logger.info(
         f"Auto-configured: micro_batch={micro_batch}, "
-        f"grad_accum={grad_accum} "
-        f"(effective_batch_size={micro_batch * grad_accum * max(1, gpu_count)} sequences across {max(1, gpu_count)} GPU(s))"
+        f"grad_accum={grad_accum}, seq_length={safe_seq_length} "
+        f"(effective_batch_size={micro_batch * grad_accum * max(1, gpu_count)} sequences, "
+        f"{effective_tokens_per_step:,} tokens/step across {max(1, gpu_count)} GPU(s))"
     )
 
-    return micro_batch, grad_accum
+    return micro_batch, grad_accum, safe_seq_length
 
 
 def load_model_for_training(
