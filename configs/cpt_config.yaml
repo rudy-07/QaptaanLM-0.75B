@@ -69,9 +69,8 @@ training:
   # SDPA works on ALL architectures including Turing (SM75).
   use_sdpa: true
   
-  # torch.compile: Fuses operators and reduces CPU overhead. ~1.3-1.5x speedup.
-  # First few steps are slower (compilation), then faster for all remaining steps.
-  use_torch_compile: true
+  # torch.compile: disabled to prevent PyTorch Dynamo parameter renaming conflicts with Accelerate
+  use_torch_compile: false
   
   # Optimizer: paged_adamw_8bit is auto-enabled on <=16GB GPUs
   optim: "adamw_torch"

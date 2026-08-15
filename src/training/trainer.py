@@ -161,22 +161,6 @@ class CPTTrainer:
             use_sdpa=use_sdpa,
         )
 
-        # ── Step 5: Apply torch.compile for kernel fusion speedup (CUDA only) ──
-        use_torch_compile = train_cfg.get("use_torch_compile", True) and not is_tpu
-        if use_torch_compile and torch.cuda.is_available():
-            try:
-                logger.info("Applying torch.compile(model, mode='default') for kernel fusion speedup...")
-                self.model = torch.compile(self.model, mode="default")
-                logger.info(
-                    "✓ torch.compile applied. First few steps will be slower (compilation), "
-                    "then ~1.3-1.5x speedup for remaining training."
-                )
-            except Exception as e:
-                logger.warning(
-                    f"torch.compile failed ({e}). Continuing without compilation. "
-                    "This is common on some environments — training will still work, just slightly slower."
-                )
-
         logger.info(f"Setup complete in {self.env} environment (dtype={model_dtype})")
 
     def _build_training_args(self, eval_dataset: Optional[Dataset] = None) -> TrainingArguments:
@@ -282,14 +266,6 @@ class CPTTrainer:
         if "eval_strategy" in valid_params:
             candidate_kwargs["eval_strategy"] = eval_strat
             candidate_kwargs["eval_steps"] = eval_st
-        elif "evaluation_strategy" in valid_params:
-            candidate_kwargs["evaluation_strategy"] = eval_strat
-            candidate_kwargs["eval_steps"] = eval_st
-
-        # torch.compile integration via TrainingArguments (HF native support)
-        if train_cfg.get("use_torch_compile", True) and "torch_compile" in valid_params:
-            candidate_kwargs["torch_compile"] = True
-
         # Filter strictly to valid TrainingArguments parameters to avoid any TypeError
         filtered_kwargs = {k: v for k, v in candidate_kwargs.items() if k in valid_params and v is not None}
         return TrainingArguments(**filtered_kwargs)
@@ -395,10 +371,10 @@ class CPTTrainer:
         optimizations = []
         if self.liger_enabled:
             optimizations.append("Liger Kernel (FusedCE+RMSNorm+SwiGLU+RoPE)")
-        if train_cfg.get("use_sdpa", True):
+        if train_cfg.get("use_sdpa", True) and not bool(self.hardware.get("tpu_available", False)):
             optimizations.append("SDPA Attention")
-        if train_cfg.get("use_torch_compile", True):
-            optimizations.append("torch.compile")
+        if bool(self.hardware.get("tpu_available", False)):
+            optimizations.append("TPU v5e Native BF16")
         if "8bit" in str(training_args.optim):
             optimizations.append("8-bit AdamW")
         optimizations.append(f"seq_len={seq_len}")
