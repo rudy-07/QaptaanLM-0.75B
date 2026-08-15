@@ -96,15 +96,29 @@ class CPTTrainer:
             logger.info("Liger Kernel disabled via config (use_liger_kernel: false)")
 
         # ── Step 2: Auto-configure batch size ──
+        # Detect number of accelerator devices
         if is_tpu:
-            # TPU v5e-8 has 8 cores x 16GB HBM = 128GB total memory
-            train_cfg["per_device_train_batch_size"] = train_cfg.get("per_device_train_batch_size", 2)
-            train_cfg["gradient_accumulation_steps"] = train_cfg.get("gradient_accumulation_steps", 2)
+            try:
+                import torch_xla.core.xla_model as xm
+                self._n_devices = xm.xrt_world_size()
+            except Exception:
+                self._n_devices = 8  # TPU v5e-8 default
+        else:
+            self._n_devices = max(self.hardware.get("gpu_count", 1), 1)
+
+        if is_tpu:
+            # TPU v5e-8 has 8 cores x 16GB HBM = 128GB total memory.
+            # Avoid gradient_accumulation on TPU: each accum step triggers a
+            # separate XLA graph trace/compilation, which is much slower than
+            # simply increasing per_device_train_batch_size.
+            train_cfg["per_device_train_batch_size"] = train_cfg.get("tpu_per_device_train_batch_size", 4)
+            train_cfg["gradient_accumulation_steps"] = 1
             train_cfg["max_seq_length"] = train_cfg.get("max_seq_length", 2048)
+            n_cores = self._n_devices
             logger.info(
                 f"Auto-configured for TPU v5e-8: micro_batch={train_cfg['per_device_train_batch_size']} per core "
-                f"x 8 cores = {8 * train_cfg['per_device_train_batch_size']} sequences/step "
-                f"({8 * train_cfg['per_device_train_batch_size'] * train_cfg['gradient_accumulation_steps'] * train_cfg['max_seq_length']:,} tokens/step)"
+                f"x {n_cores} cores = {n_cores * train_cfg['per_device_train_batch_size']} sequences/step "
+                f"({n_cores * train_cfg['per_device_train_batch_size'] * train_cfg['max_seq_length']:,} tokens/step)"
             )
         elif self.hardware["gpu_memory_gb"]:
             n_gpus = max(self.hardware.get("gpu_count", 1), 1)
@@ -174,6 +188,7 @@ class CPTTrainer:
         import inspect
 
         train_cfg = self.config["training"]
+        is_tpu = bool(self.hardware.get("tpu_available", False))
 
         # Compute max_steps from target tokens if not explicitly set
         max_steps = train_cfg.get("max_steps", -1)
@@ -181,8 +196,8 @@ class CPTTrainer:
             seq_len = train_cfg["max_seq_length"]
             batch_size = train_cfg["per_device_train_batch_size"]
             grad_accum = train_cfg["gradient_accumulation_steps"]
-            n_gpus = max(self.hardware.get("gpu_count", 1), 1)
-            tokens_per_step = seq_len * batch_size * grad_accum * n_gpus
+            n_devices = getattr(self, "_n_devices", max(self.hardware.get("gpu_count", 1), 1))
+            tokens_per_step = seq_len * batch_size * grad_accum * n_devices
             target_tokens = train_cfg.get("target_tokens", 1_000_000_000)
             max_steps = target_tokens // tokens_per_step
             logger.info(
@@ -245,6 +260,9 @@ class CPTTrainer:
             "save_total_limit": train_cfg.get("save_total_limit", 5),
             "dataloader_num_workers": train_cfg.get("dataloader_num_workers", 2),
             "dataloader_pin_memory": False if is_tpu else train_cfg.get("dataloader_pin_memory", True),
+            # TPU XLA requires static tensor shapes — drop the last incomplete
+            # batch to prevent a shape mismatch deadlock across cores.
+            "dataloader_drop_last": True if is_tpu else train_cfg.get("dataloader_drop_last", False),
             "seed": train_cfg.get("seed", 42),
             "data_seed": train_cfg.get("data_seed", 42),
             "report_to": train_cfg.get("report_to", "none"),
@@ -284,8 +302,8 @@ class CPTTrainer:
         seq_len = train_cfg["max_seq_length"]
         batch_size = train_cfg["per_device_train_batch_size"]
         grad_accum = train_cfg["gradient_accumulation_steps"]
-        n_gpus = max(self.hardware.get("gpu_count", 1), 1)
-        effective_batch = batch_size * grad_accum * n_gpus
+        n_devices = getattr(self, "_n_devices", max(self.hardware.get("gpu_count", 1), 1))
+        effective_batch = batch_size * grad_accum * n_devices
 
         callbacks = [
             TokenCountCallback(
@@ -386,10 +404,11 @@ class CPTTrainer:
         optimizations.append(f"seq_len={seq_len}")
         optimizations.append(f"micro_batch={training_args.per_device_train_batch_size}")
 
+        n_devices = getattr(self, "_n_devices", max(self.hardware.get("gpu_count", 1), 1))
         logger.info(
             f"Starting CPT training with optimizations: {', '.join(optimizations)}\n"
             f"  Total steps: {training_args.max_steps:,}\n"
-            f"  Tokens/step: {seq_len * training_args.per_device_train_batch_size * training_args.gradient_accumulation_steps * max(self.hardware.get('gpu_count', 1), 1):,}"
+            f"  Tokens/step: {seq_len * training_args.per_device_train_batch_size * training_args.gradient_accumulation_steps * n_devices:,}"
         )
 
         self.trainer.train(resume_from_checkpoint=resume_path)

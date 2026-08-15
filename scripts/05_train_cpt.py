@@ -43,31 +43,14 @@ from tqdm.auto import tqdm
 logger = logging.getLogger(__name__)
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Launch CPT Training")
-    parser.add_argument("--config", type=str, default="cpt_config.yaml", help="Path to training config")
-    parser.add_argument("--data-dir", type=str, default=None, help="Directory containing processed Arrow/Parquet shards")
-    parser.add_argument("--resume", type=str, default=None, help="Checkpoint path to resume from")
-    args = parser.parse_args()
+def _load_dataset(config, env):
+    """Load the training dataset. Shared by single-process and multi-process paths."""
+    data_dir = None
+    # Try CLI --data-dir first (stored in config by main)
+    data_dir = config.get("_cli_data_dir")
+    if not data_dir:
+        data_dir = config["storage"]["processed_data"]["path"]
 
-    # Load configuration
-    config = load_config(args.config)
-    env = detect_environment()
-
-    if args.resume:
-        config["training"]["resume_from_checkpoint"] = args.resume
-
-    # Set up logging
-    log_dir = str(project_root / "logs")
-    setup_logging(log_dir=log_dir, log_name="cpt_training")
-
-    logger.info("=" * 60)
-    logger.info(f"Starting Qwen3.5-0.8B CPT Training in [{env}] environment")
-    logger.info("=" * 60)
-
-    # Determine dataset path or Hugging Face Hub repo ID
-    data_dir = args.data_dir or config["storage"]["processed_data"]["path"]
-    
     train_dataset = None
     data_path = Path(data_dir) if data_dir else None
 
@@ -116,15 +99,82 @@ def main():
                 f"No dataset found at '{data_dir}' or in /kaggle/input. "
                 "Please verify the directory or provide a valid Kaggle path / HF Hub repo."
             )
-            return
+            return None
 
-    # Initialize trainer
+    return train_dataset
+
+
+def _is_tpu_available():
+    """Check if TPU (via torch_xla PJRT) is available."""
+    try:
+        import torch_xla.core.xla_model as xm  # noqa: F401
+        return os.environ.get("PJRT_DEVICE", "").upper() == "TPU"
+    except ImportError:
+        return False
+
+
+def _train_worker(config, train_dataset):
+    """Training worker — runs once per process (1 on GPU/CPU, 8 on TPU v5e-8)."""
     trainer = CPTTrainer(config)
     trainer.setup()
-
-    # Launch training
     trainer.train(train_dataset=train_dataset)
     logger.info("CPT Training successfully completed!")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Launch CPT Training")
+    parser.add_argument("--config", type=str, default="cpt_config.yaml", help="Path to training config")
+    parser.add_argument("--data-dir", type=str, default=None, help="Directory containing processed Arrow/Parquet shards")
+    parser.add_argument("--resume", type=str, default=None, help="Checkpoint path to resume from")
+    args = parser.parse_args()
+
+    # Load configuration
+    config = load_config(args.config)
+    env = detect_environment()
+
+    if args.resume:
+        config["training"]["resume_from_checkpoint"] = args.resume
+
+    # Stash CLI data-dir into config so workers can access it
+    if args.data_dir:
+        config["_cli_data_dir"] = args.data_dir
+
+    # Set up logging
+    log_dir = str(project_root / "logs")
+    setup_logging(log_dir=log_dir, log_name="cpt_training")
+
+    logger.info("=" * 60)
+    logger.info(f"Starting Qwen3.5-0.8B CPT Training in [{env}] environment")
+    logger.info("=" * 60)
+
+    # Load dataset (shared across all processes — HuggingFace datasets use
+    # memory-mapped Arrow files, so forked processes share the same memory)
+    train_dataset = _load_dataset(config, env)
+    if train_dataset is None:
+        return
+
+    # ── Launch ──
+    if _is_tpu_available():
+        # TPU v5e-8: HuggingFace Trainer handles XLA multi-process internally
+        # when launched via xla_spawn. If we're already inside an xla_spawn
+        # child process (PJRT_DEVICE=TPU is set and xla is importable),
+        # Trainer will detect XLA and use xm.xrt_world_size() for DDP.
+        #
+        # The notebook cell MUST launch this script via:
+        #   python -m torch_xla.distributed.xla_spawn --num_cores 8 scripts/05_train_cpt.py ...
+        #
+        # If running directly (not via xla_spawn), auto-relaunch:
+        try:
+            import torch_xla.core.xla_model as xm
+            # If we can get here, we're inside an xla_spawn worker — proceed
+            logger.info(f"TPU worker started (ordinal={xm.get_local_ordinal()}, world_size={xm.xrt_world_size()})")
+            _train_worker(config, train_dataset)
+        except Exception as e:
+            logger.error(f"TPU training failed: {e}", exc_info=True)
+            raise
+    else:
+        # GPU / CPU path — single process
+        _train_worker(config, train_dataset)
 
 
 if __name__ == "__main__":

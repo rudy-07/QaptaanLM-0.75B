@@ -127,6 +127,11 @@ environment:
     dataloader_num_workers: 0
     # T4x2: 2x16GB — with Liger: micro_batch=2, grad_accum=8, seq=2048
     # → 65,536 tokens/step → ~15,258 steps for 1B tokens
+    #
+    # TPU v5e-8: Use xla_spawn to launch 8 workers (one per core):
+    #   !PJRT_DEVICE=TPU python -m torch_xla.distributed.xla_spawn --num_cores 8 scripts/05_train_cpt.py --data-dir /kaggle/working/data
+    # Per-core batch size for TPU (grad_accum forced to 1 at runtime):
+    tpu_per_device_train_batch_size: 4
 
   # Local (for testing only)
   local:
