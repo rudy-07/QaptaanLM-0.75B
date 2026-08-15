@@ -151,11 +151,17 @@ class CPTTrainer:
             train_cfg["dataloader_num_workers"] = train_cfg.get("dataloader_num_workers", 0)
 
         # ── Step 4: Load model and tokenizer (with SDPA attention) ──
+        # On TPU v5e (16GB HBM per core), 0.75B model easily fits without gradient checkpointing.
+        # Disabling gradient checkpointing on TPU avoids XLA lazy graph compilation deadlocks.
         use_sdpa = train_cfg.get("use_sdpa", True) and not is_tpu
+        use_grad_ckpt = train_cfg.get("gradient_checkpointing", True) and not is_tpu
+        if is_tpu and train_cfg.get("gradient_checkpointing", True):
+            logger.info("TPU detected: disabling gradient checkpointing (0.75B fits easily in 16GB HBM; avoids XLA graph deadlocks).")
+
         self.model, self.tokenizer = load_model_for_training(
             model_name_or_path=model_cfg["name_or_path"],
             dtype=model_dtype,
-            gradient_checkpointing=train_cfg.get("gradient_checkpointing", True),
+            gradient_checkpointing=use_grad_ckpt,
             strip_vision=True,
             trust_remote_code=model_cfg.get("trust_remote_code", True),
             use_sdpa=use_sdpa,
@@ -227,7 +233,7 @@ class CPTTrainer:
             "max_grad_norm": train_cfg.get("max_grad_norm", 1.0),
             "bf16": train_cfg.get("bf16", False),
             "fp16": train_cfg.get("fp16", True),
-            "gradient_checkpointing": train_cfg.get("gradient_checkpointing", True),
+            "gradient_checkpointing": False if is_tpu else train_cfg.get("gradient_checkpointing", True),
             "optim": optim_name,
             "adam_beta1": train_cfg.get("adam_beta1", 0.9),
             "adam_beta2": train_cfg.get("adam_beta2", 0.95),
