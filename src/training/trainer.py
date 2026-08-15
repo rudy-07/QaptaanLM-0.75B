@@ -238,7 +238,7 @@ class CPTTrainer:
             "save_steps": train_cfg.get("save_steps", 200),
             "save_total_limit": train_cfg.get("save_total_limit", 5),
             "dataloader_num_workers": train_cfg.get("dataloader_num_workers", 2),
-            "dataloader_pin_memory": train_cfg.get("dataloader_pin_memory", True),
+            "dataloader_pin_memory": False if is_tpu else train_cfg.get("dataloader_pin_memory", True),
             "seed": train_cfg.get("seed", 42),
             "data_seed": train_cfg.get("data_seed", 42),
             "report_to": train_cfg.get("report_to", "none"),
