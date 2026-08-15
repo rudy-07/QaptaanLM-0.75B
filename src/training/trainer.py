@@ -7,6 +7,9 @@ Main training loop built on HuggingFace Trainer with:
 - Gradient checkpointing
 - Checkpoint resumption
 - Multi-environment support (Colab, Kaggle, local)
+- Liger Kernel integration (fused CE/RMSNorm/SwiGLU/RoPE)
+- PyTorch SDPA attention backend
+- torch.compile support
 """
 
 import logging
@@ -32,6 +35,11 @@ from src.training.callbacks import (
     CheckpointUploadCallback,
     DetailedLoggingCallback,
 )
+from src.training.liger_integration import (
+    apply_liger_kernel_patches,
+    is_liger_available,
+    estimate_vram_savings,
+)
 from src.utils.config import load_config, detect_environment
 
 logger = logging.getLogger(__name__)
@@ -42,6 +50,12 @@ class CPTTrainer:
 
     Wraps HuggingFace Trainer with CPT-specific configuration,
     token-count-based training, and environment-aware setup.
+
+    Speed Optimizations (automatically applied when available):
+    - Liger Kernel: Fuses cross-entropy, RMSNorm, SwiGLU, RoPE → 40-60% VRAM savings
+    - SDPA attention: Memory-efficient attention backend (works on T4, unlike FA2)
+    - torch.compile: Kernel fusion and reduced CPU overhead → 1.3-1.5x speedup
+    - 8-bit AdamW: Saves ~4.5GB VRAM on memory-constrained GPUs
     """
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
@@ -57,19 +71,34 @@ class CPTTrainer:
         self.model = None
         self.tokenizer = None
         self.trainer = None
+        self.liger_enabled = False
 
     def setup(self) -> None:
         """Set up model, tokenizer, and training arguments."""
         model_cfg = self.config["model"]
         train_cfg = self.config["training"]
 
-        # Auto-configure batch size if GPU detected
+        # ── Step 1: Apply Liger Kernel patches BEFORE model loading ──
+        # Liger patches the model *class*, so it must be called before from_pretrained()
+        if train_cfg.get("use_liger_kernel", True):
+            self.liger_enabled = apply_liger_kernel_patches(model_type="qwen3")
+            if self.liger_enabled:
+                # Log estimated VRAM savings
+                estimate_vram_savings(
+                    seq_length=train_cfg.get("max_seq_length", 2048),
+                    micro_batch=train_cfg.get("per_device_train_batch_size", 1),
+                )
+        else:
+            logger.info("Liger Kernel disabled via config (use_liger_kernel: false)")
+
+        # ── Step 2: Auto-configure batch size (Liger-aware) ──
         if self.hardware["gpu_memory_gb"]:
             n_gpus = max(self.hardware.get("gpu_count", 1), 1)
             micro_batch, grad_accum, safe_seq_length = auto_configure_batch_size(
                 gpu_memory_gb=self.hardware["gpu_memory_gb"],
                 seq_length=train_cfg["max_seq_length"],
                 gpu_count=n_gpus,
+                liger_enabled=self.liger_enabled,
             )
             # Use auto-configured values unless explicitly set in config
             if self.env != "local":
@@ -77,7 +106,7 @@ class CPTTrainer:
                 train_cfg["gradient_accumulation_steps"] = grad_accum
                 train_cfg["max_seq_length"] = safe_seq_length
 
-        # Auto-configure precision based on hardware capability
+        # ── Step 3: Auto-configure precision ──
         # Tesla T4/V100/P100 lack hardware BF16 Tensor Cores and are 5-10x slower on bf16.
         # A100/H100/L4 have native BF16 Tensor Cores.
         has_bf16 = bool(self.hardware.get("bf16_support", False))
@@ -101,14 +130,32 @@ class CPTTrainer:
         else:
             train_cfg["dataloader_num_workers"] = train_cfg.get("dataloader_num_workers", 0)
 
-        # Load model and tokenizer
+        # ── Step 4: Load model and tokenizer (with SDPA attention) ──
+        use_sdpa = train_cfg.get("use_sdpa", True)
         self.model, self.tokenizer = load_model_for_training(
             model_name_or_path=model_cfg["name_or_path"],
             dtype=model_dtype,
             gradient_checkpointing=train_cfg.get("gradient_checkpointing", True),
             strip_vision=True,
             trust_remote_code=model_cfg.get("trust_remote_code", True),
+            use_sdpa=use_sdpa,
         )
+
+        # ── Step 5: Apply torch.compile for kernel fusion speedup ──
+        use_torch_compile = train_cfg.get("use_torch_compile", True)
+        if use_torch_compile and torch.cuda.is_available():
+            try:
+                logger.info("Applying torch.compile(model, mode='default') for kernel fusion speedup...")
+                self.model = torch.compile(self.model, mode="default")
+                logger.info(
+                    "✓ torch.compile applied. First few steps will be slower (compilation), "
+                    "then ~1.3-1.5x speedup for remaining training."
+                )
+            except Exception as e:
+                logger.warning(
+                    f"torch.compile failed ({e}). Continuing without compilation. "
+                    "This is common on some environments — training will still work, just slightly slower."
+                )
 
         logger.info(f"Setup complete in {self.env} environment (dtype={model_dtype})")
 
@@ -216,6 +263,10 @@ class CPTTrainer:
             candidate_kwargs["evaluation_strategy"] = eval_strat
             candidate_kwargs["eval_steps"] = eval_st
 
+        # torch.compile integration via TrainingArguments (HF native support)
+        if train_cfg.get("use_torch_compile", True) and "torch_compile" in valid_params:
+            candidate_kwargs["torch_compile"] = True
+
         # Filter strictly to valid TrainingArguments parameters to avoid any TypeError
         filtered_kwargs = {k: v for k, v in candidate_kwargs.items() if k in valid_params and v is not None}
         return TrainingArguments(**filtered_kwargs)
@@ -317,7 +368,25 @@ class CPTTrainer:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        logger.info("Starting CPT training...")
+        # Log optimization summary
+        optimizations = []
+        if self.liger_enabled:
+            optimizations.append("Liger Kernel (FusedCE+RMSNorm+SwiGLU+RoPE)")
+        if train_cfg.get("use_sdpa", True):
+            optimizations.append("SDPA Attention")
+        if train_cfg.get("use_torch_compile", True):
+            optimizations.append("torch.compile")
+        if "8bit" in str(training_args.optim):
+            optimizations.append("8-bit AdamW")
+        optimizations.append(f"seq_len={seq_len}")
+        optimizations.append(f"micro_batch={training_args.per_device_train_batch_size}")
+
+        logger.info(
+            f"Starting CPT training with optimizations: {', '.join(optimizations)}\n"
+            f"  Total steps: {training_args.max_steps:,}\n"
+            f"  Tokens/step: {seq_len * training_args.per_device_train_batch_size * training_args.gradient_accumulation_steps * max(self.hardware.get('gpu_count', 1), 1):,}"
+        )
+
         self.trainer.train(resume_from_checkpoint=resume_path)
 
         # Save final model

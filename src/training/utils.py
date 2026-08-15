@@ -5,6 +5,7 @@ Handles:
 - GPU/TPU detection and configuration
 - Memory-efficient model loading
 - Vision component stripping
+- Liger Kernel-aware VRAM optimization
 """
 
 import logging
@@ -74,15 +75,16 @@ def auto_configure_batch_size(
     model_params_b: float = 0.8,
     gpu_count: int = 1,
     vocab_size: int = 248320,
+    liger_enabled: bool = False,
 ) -> Tuple[int, int, int]:
     """Automatically determine safe micro batch size, gradient accumulation, and sequence length.
 
     Accounts for model parameters, optimizer states (AdamW), gradient checkpointing,
     and the large vocabulary (248k) logits tensor in float32 during loss calculation.
 
-    On memory-constrained GPUs (≤16GB like T4), the sequence length is reduced from
-    4096 to 2048 because the logits tensor alone (seq_len × 248k × 4 bytes fp32)
-    costs ~3.8GB at 4096 — too large for backward pass on 14.6GB T4.
+    When Liger Kernel is enabled, the FusedLinearCrossEntropy kernel avoids
+    materializing the full [seq, vocab] logits tensor, saving ~2-4GB VRAM.
+    This allows higher sequence lengths (2048 instead of 1024) on 16GB GPUs.
 
     Args:
         gpu_memory_gb: Available GPU memory in GB.
@@ -90,38 +92,66 @@ def auto_configure_batch_size(
         model_params_b: Model parameters in billions.
         gpu_count: Number of GPUs available.
         vocab_size: Model vocabulary size (default 248,320 for Qwen3.5).
+        liger_enabled: Whether Liger Kernel is active (reduces CE VRAM).
 
     Returns:
         Tuple of (micro_batch_size, gradient_accumulation_steps, safe_seq_length).
     """
     safe_seq_length = seq_length
 
-    # On ≤16GB GPUs (like Tesla T4 14.6GB), cap sequence length to 1024 because the 248,320-vocab
-    # cross_entropy calculation allocates 3 separate tensors (logits, shift_logits, loss buffer):
-    # - At 2048: 3 × (2048 × 248k × 4B) = ~5.7GB VRAM spike -> causes CUDA OOM during loss.
-    # - At 1024: 3 × (1024 × 248k × 4B) = ~2.8GB VRAM spike -> fits with ~3.7GB free headroom!
-    if gpu_memory_gb <= 16.5 and seq_length > 1024:
-        logger.warning(
-            f"GPU has only {gpu_memory_gb}GB VRAM. Reducing max_seq_length from "
-            f"{seq_length} to 1024 to prevent CUDA OOM from the 248k-vocabulary cross-entropy buffers "
-            f"(saves ~{((seq_length - 1024) * vocab_size * 4 * 3) / (1024**3):.1f}GB VRAM during loss computation)"
-        )
-        safe_seq_length = 1024
+    if gpu_memory_gb <= 16.5:
+        if liger_enabled:
+            # Liger's FusedLinearCrossEntropy processes in chunks (~1024 tokens at a time),
+            # never materializing the full [seq, vocab] logits tensor. This saves ~2-4GB.
+            # With Liger: seq_len=2048 is safe on T4 (cross-entropy peak: ~0.6GB instead of ~5.7GB)
+            if seq_length > 2048:
+                logger.warning(
+                    f"GPU has {gpu_memory_gb}GB VRAM. Even with Liger Kernel, reducing "
+                    f"max_seq_length from {seq_length} to 2048 for safety."
+                )
+                safe_seq_length = 2048
+            else:
+                logger.info(
+                    f"Liger Kernel enabled: keeping seq_length={seq_length} on {gpu_memory_gb}GB GPU "
+                    f"(FusedLinearCrossEntropy avoids full logits materialization)"
+                )
+        else:
+            # Without Liger: cap at 1024 because the 248k-vocab cross-entropy is massive
+            # At 2048: 3 × (2048 × 248k × 4B) = ~5.7GB VRAM spike -> CUDA OOM
+            # At 1024: 3 × (1024 × 248k × 4B) = ~2.8GB VRAM spike -> fits with ~3.7GB headroom
+            if seq_length > 1024:
+                logger.warning(
+                    f"GPU has only {gpu_memory_gb}GB VRAM. Reducing max_seq_length from "
+                    f"{seq_length} to 1024 to prevent CUDA OOM from the 248k-vocabulary "
+                    f"cross-entropy buffers "
+                    f"(saves ~{((seq_length - 1024) * vocab_size * 4 * 3) / (1024**3):.1f}GB VRAM "
+                    f"during loss computation). Install liger-kernel to enable seq_len=2048."
+                )
+                safe_seq_length = 1024
 
     # Base memory: model (4B/param FP32) + grads (4B/param FP32) + 8-bit AdamW (2B/param) + CUDA/NCCL overhead (~1.5GB)
     base_memory_gb = (model_params_b * 10.0) + 1.5  # ~9.5 GB for 0.8B FP32 master weights
 
-    # Per-sample peak memory at loss computation:
-    # - Logits in fp32: safe_seq_length * vocab_size * 4 bytes
-    # - Activations with gradient checkpointing: ~0.5 GB
-    logits_gb = (safe_seq_length * vocab_size * 4) / (1024**3)
+    # Per-sample peak memory at loss computation
+    if liger_enabled:
+        # Liger: cross-entropy processes in chunks, peak is much lower
+        chunk_size = min(1024, safe_seq_length)
+        logits_gb = (chunk_size * vocab_size * 4) / (1024**3)
+    else:
+        # Standard: full logits tensor in fp32
+        logits_gb = (safe_seq_length * vocab_size * 4) / (1024**3)
     activation_gb = (safe_seq_length / 4096) * 0.5
     mem_per_sample_gb = logits_gb + activation_gb
 
     # Strict safety cap based on total GPU VRAM
     if gpu_memory_gb <= 16.5:
-        # 16GB GPUs (T4, P100, V100-16GB): Must use micro_batch=1
-        micro_batch = 1
+        if liger_enabled:
+            # With Liger savings, we can try micro_batch=2 on T4
+            available = max(0.0, gpu_memory_gb - base_memory_gb)
+            micro_batch = max(1, min(2, int(available / mem_per_sample_gb)))
+        else:
+            # 16GB GPUs (T4, P100, V100-16GB): Must use micro_batch=1
+            micro_batch = 1
     elif gpu_memory_gb <= 24.5:
         # 24GB GPUs (L4, RTX 3090, RTX 4090, A10G): max micro_batch=2
         available = max(0.0, gpu_memory_gb - base_memory_gb)
@@ -151,6 +181,7 @@ def auto_configure_batch_size(
         f"grad_accum={grad_accum}, seq_length={safe_seq_length} "
         f"(effective_batch_size={micro_batch * grad_accum * max(1, gpu_count)} sequences, "
         f"{effective_tokens_per_step:,} tokens/step across {max(1, gpu_count)} GPU(s))"
+        f"{' [Liger Kernel active]' if liger_enabled else ''}"
     )
 
     return micro_batch, grad_accum, safe_seq_length
@@ -162,6 +193,7 @@ def load_model_for_training(
     gradient_checkpointing: bool = True,
     strip_vision: bool = True,
     trust_remote_code: bool = True,
+    use_sdpa: bool = True,
 ) -> Tuple[Any, Any]:
     """Load model and tokenizer for CPT training.
 
@@ -169,6 +201,7 @@ def load_model_for_training(
     - Loading as text-only CausalLM (strips vision encoder)
     - Setting up gradient checkpointing
     - Proper dtype configuration
+    - SDPA attention backend (memory-efficient on T4)
 
     Args:
         model_name_or_path: HF model ID or local path.
@@ -176,6 +209,7 @@ def load_model_for_training(
         gradient_checkpointing: Whether to enable gradient checkpointing.
         strip_vision: Whether to load text-only model (strip vision).
         trust_remote_code: Whether to allow remote code from HF Hub.
+        use_sdpa: Whether to use PyTorch SDPA attention (recommended for T4).
 
     Returns:
         Tuple of (model, tokenizer).
@@ -196,6 +230,13 @@ def load_model_for_training(
     }
     torch_dtype = dtype_map.get(dtype, torch.bfloat16)
 
+    # Determine attention implementation
+    # SDPA (Scaled Dot-Product Attention) uses PyTorch's native memory-efficient
+    # attention backend. This works on ALL GPU architectures including T4 (SM75),
+    # unlike FlashAttention-2 which requires SM80+ (Ampere).
+    attn_impl = "sdpa" if use_sdpa else "eager"
+    logger.info(f"Using attention implementation: {attn_impl}")
+
     # Load model
     if strip_vision:
         # Use Qwen3_5ForCausalLM which loads only the language model
@@ -207,6 +248,7 @@ def load_model_for_training(
                 model_name_or_path,
                 torch_dtype=torch_dtype,
                 trust_remote_code=trust_remote_code,
+                attn_implementation=attn_impl,
             )
             logger.info(
                 f"✓ Loaded text-only model. "
@@ -223,6 +265,7 @@ def load_model_for_training(
                 model_name_or_path,
                 torch_dtype=torch_dtype,
                 trust_remote_code=trust_remote_code,
+                attn_implementation=attn_impl,
             )
     else:
         from transformers import AutoModelForCausalLM
@@ -231,6 +274,7 @@ def load_model_for_training(
             model_name_or_path,
             torch_dtype=torch_dtype,
             trust_remote_code=trust_remote_code,
+            attn_implementation=attn_impl,
         )
 
     # Enable gradient checkpointing for memory efficiency
