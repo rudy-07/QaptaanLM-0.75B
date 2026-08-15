@@ -78,9 +78,13 @@ class CPTTrainer:
         model_cfg = self.config["model"]
         train_cfg = self.config["training"]
 
-        # ── Step 1: Apply Liger Kernel patches BEFORE model loading ──
-        # Liger patches the model *class*, so it must be called before from_pretrained()
-        if train_cfg.get("use_liger_kernel", True):
+        is_tpu = bool(self.hardware.get("tpu_available", False))
+
+        # ── Step 1: Apply Liger Kernel patches (CUDA GPUs only) ──
+        if is_tpu:
+            logger.info("TPU detected: skipping Liger Kernel (Triton is CUDA-only; TPU XLA handles graph fusion natively).")
+            self.liger_enabled = False
+        elif train_cfg.get("use_liger_kernel", True):
             self.liger_enabled = apply_liger_kernel_patches(model_type="qwen3")
             if self.liger_enabled:
                 # Log estimated VRAM savings
@@ -91,8 +95,18 @@ class CPTTrainer:
         else:
             logger.info("Liger Kernel disabled via config (use_liger_kernel: false)")
 
-        # ── Step 2: Auto-configure batch size (Liger-aware) ──
-        if self.hardware["gpu_memory_gb"]:
+        # ── Step 2: Auto-configure batch size ──
+        if is_tpu:
+            # TPU v5e-8 has 8 cores x 16GB HBM = 128GB total memory
+            train_cfg["per_device_train_batch_size"] = train_cfg.get("per_device_train_batch_size", 2)
+            train_cfg["gradient_accumulation_steps"] = train_cfg.get("gradient_accumulation_steps", 2)
+            train_cfg["max_seq_length"] = train_cfg.get("max_seq_length", 2048)
+            logger.info(
+                f"Auto-configured for TPU v5e-8: micro_batch={train_cfg['per_device_train_batch_size']} per core "
+                f"x 8 cores = {8 * train_cfg['per_device_train_batch_size']} sequences/step "
+                f"({8 * train_cfg['per_device_train_batch_size'] * train_cfg['gradient_accumulation_steps'] * train_cfg['max_seq_length']:,} tokens/step)"
+            )
+        elif self.hardware["gpu_memory_gb"]:
             n_gpus = max(self.hardware.get("gpu_count", 1), 1)
             micro_batch, grad_accum, safe_seq_length = auto_configure_batch_size(
                 gpu_memory_gb=self.hardware["gpu_memory_gb"],
@@ -107,22 +121,28 @@ class CPTTrainer:
                 train_cfg["max_seq_length"] = safe_seq_length
 
         # ── Step 3: Auto-configure precision ──
-        # Tesla T4/V100/P100 lack hardware BF16 Tensor Cores and are 5-10x slower on bf16.
-        # A100/H100/L4 have native BF16 Tensor Cores.
-        has_bf16 = bool(self.hardware.get("bf16_support", False))
-        if not has_bf16:
-            logger.info("GPU lacks native BF16 Tensor Cores (e.g. Tesla T4). Auto-switching to FP16 AMP (master weights in FP32 + FP16 autocast) for 5-10x faster training.")
-            train_cfg["bf16"] = False
-            train_cfg["fp16"] = True
-            model_dtype = "float32"
+        if is_tpu:
+            logger.info("TPU detected: enabling native hardware bfloat16 precision.")
+            train_cfg["bf16"] = True
+            train_cfg["fp16"] = False
+            model_dtype = "bfloat16"
         else:
-            model_dtype = model_cfg.get("dtype", "bfloat16")
-            if model_dtype not in ("bfloat16", "float32"):
-                model_dtype = "bfloat16"
+            # Tesla T4/V100/P100 lack hardware BF16 Tensor Cores and are 5-10x slower on bf16.
+            # A100/H100/L4 have native BF16 Tensor Cores.
+            has_bf16 = bool(self.hardware.get("bf16_support", False))
+            if not has_bf16:
+                logger.info("GPU lacks native BF16 Tensor Cores (e.g. Tesla T4). Auto-switching to FP16 AMP (master weights in FP32 + FP16 autocast) for 5-10x faster training.")
+                train_cfg["bf16"] = False
+                train_cfg["fp16"] = True
+                model_dtype = "float32"
+            else:
+                model_dtype = model_cfg.get("dtype", "bfloat16")
+                if model_dtype not in ("bfloat16", "float32"):
+                    model_dtype = "bfloat16"
 
-        # In PyTorch AMP with fp16=True, master model weights must be float32 for GradScaler to unscale gradients
-        if train_cfg.get("fp16"):
-            model_dtype = "float32"
+            # In PyTorch AMP with fp16=True, master model weights must be float32 for GradScaler to unscale gradients
+            if train_cfg.get("fp16"):
+                model_dtype = "float32"
 
         # Use 0 dataloader workers in Colab/Kaggle containers to prevent shared-memory / CPU RAM exhaustion
         if self.env in ("kaggle", "colab"):
@@ -131,7 +151,7 @@ class CPTTrainer:
             train_cfg["dataloader_num_workers"] = train_cfg.get("dataloader_num_workers", 0)
 
         # ── Step 4: Load model and tokenizer (with SDPA attention) ──
-        use_sdpa = train_cfg.get("use_sdpa", True)
+        use_sdpa = train_cfg.get("use_sdpa", True) and not is_tpu
         self.model, self.tokenizer = load_model_for_training(
             model_name_or_path=model_cfg["name_or_path"],
             dtype=model_dtype,
@@ -141,8 +161,8 @@ class CPTTrainer:
             use_sdpa=use_sdpa,
         )
 
-        # ── Step 5: Apply torch.compile for kernel fusion speedup ──
-        use_torch_compile = train_cfg.get("use_torch_compile", True)
+        # ── Step 5: Apply torch.compile for kernel fusion speedup (CUDA only) ──
+        use_torch_compile = train_cfg.get("use_torch_compile", True) and not is_tpu
         if use_torch_compile and torch.cuda.is_available():
             try:
                 logger.info("Applying torch.compile(model, mode='default') for kernel fusion speedup...")
@@ -190,9 +210,12 @@ class CPTTrainer:
             else:
                 warmup_steps = 100
 
-        # Determine optimizer: prefer 8-bit AdamW on memory-constrained GPUs (<=16GB) to save ~4.5GB VRAM
+        # Determine optimizer: on TPU use standard adamw_torch; on GPU <=16GB prefer 8-bit AdamW
+        is_tpu = bool(self.hardware.get("tpu_available", False))
         optim_name = train_cfg.get("optim", "adamw_torch")
-        if optim_name in ("paged_adamw_8bit", "adamw_bnb_8bit") or (
+        if is_tpu:
+            optim_name = "adamw_torch"
+        elif optim_name in ("paged_adamw_8bit", "adamw_bnb_8bit") or (
             self.hardware.get("gpu_memory_gb") and self.hardware["gpu_memory_gb"] <= 16.5
         ):
             try:
