@@ -29,6 +29,25 @@ if sys.stdout.encoding != 'utf-8':
 
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
+
+def _sanitize_kaggle_pjrt_environment():
+    """Remove Kaggle's stale single-address XRT hint before PJRT starts.
+
+    Kaggle currently exposes ``TPU_PROCESS_ADDRESSES=local`` in some TPU
+    kernels.  PJRT interprets that as a one-worker topology, while the v5e-8
+    runtime reports eight workers, producing ``Expected 8 worker addresses,
+    got 1`` during initialization.  A real multi-host TPU setup may provide a
+    comma-separated address list, so only the known Kaggle sentinel is removed.
+    """
+    if os.environ.get("PJRT_DEVICE", "").upper() != "TPU":
+        return
+    process_addresses = os.environ.get("TPU_PROCESS_ADDRESSES", "").strip().lower()
+    if process_addresses in {"local", "localhost"}:
+        os.environ.pop("TPU_PROCESS_ADDRESSES", None)
+
+
+_sanitize_kaggle_pjrt_environment()
+
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
