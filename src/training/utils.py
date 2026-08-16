@@ -53,15 +53,20 @@ def detect_hardware() -> Dict[str, Any]:
     else:
         logger.info("No GPU detected, using CPU")
 
-    # Check for TPU
-    try:
-        import torch_xla.core.xla_model as xm
+    # torch_xla can be installed on a CPU notebook too.  Treat it as a TPU
+    # only when PJRT was explicitly configured for one; importing it alone must
+    # not make a local/CPU run select TPU-only precision and launch behaviour.
+    if os.environ.get("PJRT_DEVICE", "").upper() == "TPU":
+        try:
+            import torch_xla  # noqa: F401
 
-        info["tpu_available"] = True
-        info["device"] = "xla"
-        logger.info("TPU detected")
-    except ImportError:
-        pass
+            info["tpu_available"] = True
+            info["device"] = "xla"
+            logger.info("PJRT TPU requested")
+        except ImportError as exc:
+            raise RuntimeError(
+                "PJRT_DEVICE=TPU was set but torch_xla is not installed in this environment."
+            ) from exc
 
     return info
 

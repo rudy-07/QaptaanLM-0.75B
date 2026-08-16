@@ -128,10 +128,13 @@ environment:
     # T4x2: 2x16GB — with Liger: micro_batch=2, grad_accum=8, seq=2048
     # → 65,536 tokens/step → ~15,258 steps for 1B tokens
     #
-    # TPU v5e-8: Use xla_spawn to launch 8 workers (one per core):
-    #   !PJRT_DEVICE=TPU python -m torch_xla.distributed.xla_spawn --num_cores 8 scripts/05_train_cpt.py --data-dir /kaggle/working/data
-    # Per-core batch size for TPU (grad_accum forced to 1 at runtime):
-    tpu_per_device_train_batch_size: 4
+    # TPU v5e-8 / PJRT: scripts/05_train_cpt.py invokes torch_xla.launch.
+    # Do NOT use removed xla_spawn or torchrun --nproc_per_node=8: PJRT owns
+    # process creation and discovers the TPU topology itself.
+    # The 248k-token vocabulary makes the ordinary cross-entropy logits large;
+    # batch 1 is the conservative 16GB-HBM setting for a first uninterrupted run.
+    # Per-replica batch size for TPU (grad_accum is forced to 1 at runtime):
+    tpu_per_device_train_batch_size: 1
 
   # Local (for testing only)
   local:

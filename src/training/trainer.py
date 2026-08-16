@@ -72,6 +72,7 @@ class CPTTrainer:
         self.tokenizer = None
         self.trainer = None
         self.liger_enabled = False
+        self._original_use_cache = None
 
     def setup(self) -> None:
         """Set up model, tokenizer, and training arguments."""
@@ -98,11 +99,10 @@ class CPTTrainer:
         # ── Step 2: Auto-configure batch size ──
         # Detect number of accelerator devices
         if is_tpu:
-            try:
-                import torch_xla.core.xla_model as xm
-                self._n_devices = xm.xrt_world_size()
-            except Exception:
-                self._n_devices = 8  # TPU v5e-8 default
+            # ``xrt_world_size`` was removed with XRT.  Under PJRT this is the
+            # number of distributed replicas selected by torch_xla.launch.
+            import torch_xla.runtime as xr
+            self._n_devices = xr.world_size()
         else:
             self._n_devices = max(self.hardware.get("gpu_count", 1), 1)
 
@@ -116,8 +116,8 @@ class CPTTrainer:
             train_cfg["max_seq_length"] = train_cfg.get("max_seq_length", 2048)
             n_cores = self._n_devices
             logger.info(
-                f"Auto-configured for TPU v5e-8: micro_batch={train_cfg['per_device_train_batch_size']} per core "
-                f"x {n_cores} cores = {n_cores * train_cfg['per_device_train_batch_size']} sequences/step "
+                f"Auto-configured for TPU PJRT: micro_batch={train_cfg['per_device_train_batch_size']} per replica "
+                f"x {n_cores} replicas = {n_cores * train_cfg['per_device_train_batch_size']} sequences/step "
                 f"({n_cores * train_cfg['per_device_train_batch_size'] * train_cfg['max_seq_length']:,} tokens/step)"
             )
         elif self.hardware["gpu_memory_gb"]:
@@ -180,6 +180,10 @@ class CPTTrainer:
             trust_remote_code=model_cfg.get("trust_remote_code", True),
             use_sdpa=use_sdpa,
         )
+        # KV caching is for autoregressive inference.  It wastes memory during
+        # full-sequence training and can create a second XLA graph.
+        self._original_use_cache = getattr(self.model.config, "use_cache", True)
+        self.model.config.use_cache = False
 
         logger.info(f"Setup complete in {self.env} environment (dtype={model_dtype})")
 
@@ -246,8 +250,8 @@ class CPTTrainer:
             "lr_scheduler_type": train_cfg.get("lr_scheduler_type", "cosine"),
             "weight_decay": train_cfg.get("weight_decay", 0.01),
             "max_grad_norm": train_cfg.get("max_grad_norm", 1.0),
-            "bf16": train_cfg.get("bf16", False),
-            "fp16": train_cfg.get("fp16", True),
+            "bf16": True if is_tpu else train_cfg.get("bf16", False),
+            "fp16": False if is_tpu else train_cfg.get("fp16", True),
             "gradient_checkpointing": False if is_tpu else train_cfg.get("gradient_checkpointing", True),
             "optim": optim_name,
             "adam_beta1": train_cfg.get("adam_beta1", 0.9),
@@ -357,19 +361,43 @@ class CPTTrainer:
         training_args = self._build_training_args(eval_dataset=eval_dataset)
         callbacks = self._build_callbacks()
 
-        # Zero-copy dynamic slicing collator: slices sequences to seq_len on the fly
-        # (Zero startup waiting time, instantly ready)
+        # Fixed tensor shapes are essential on TPU: variable final sequences
+        # otherwise force costly recompilations (and can make replicas diverge).
+        pad_token_id = self.tokenizer.pad_token_id
+        if pad_token_id is None:
+            pad_token_id = self.tokenizer.eos_token_id if self.tokenizer.eos_token_id is not None else 0
+
         def data_collator(features):
             batch = {}
-            for k in ("input_ids", "attention_mask"):
-                if k in features[0]:
-                    tensors = [torch.as_tensor(f[k][:seq_len], dtype=torch.long) for f in features]
-                    batch[k] = torch.stack(tensors)
-            if "labels" in features[0]:
-                tensors = [torch.as_tensor(f["labels"][:seq_len], dtype=torch.long) for f in features]
-                batch["labels"] = torch.stack(tensors)
-            elif "input_ids" in batch:
-                batch["labels"] = batch["input_ids"].clone()
+            input_ids = []
+            attention_masks = []
+            labels = []
+            for feature in features:
+                ids = torch.as_tensor(feature["input_ids"][:seq_len], dtype=torch.long)
+                length = ids.numel()
+                padded_ids = torch.full((seq_len,), pad_token_id, dtype=torch.long)
+                padded_ids[:length] = ids
+                input_ids.append(padded_ids)
+
+                mask = torch.zeros(seq_len, dtype=torch.long)
+                if "attention_mask" in feature:
+                    source_mask = torch.as_tensor(feature["attention_mask"][:seq_len], dtype=torch.long)
+                    mask[:source_mask.numel()] = source_mask
+                else:
+                    mask[:length] = 1
+                attention_masks.append(mask)
+
+                source_labels = feature.get("labels", feature["input_ids"])
+                source_labels = torch.as_tensor(source_labels[:seq_len], dtype=torch.long)
+                padded_labels = torch.full((seq_len,), -100, dtype=torch.long)
+                padded_labels[:source_labels.numel()] = source_labels
+                # Never calculate loss for padding tokens.
+                padded_labels[mask == 0] = -100
+                labels.append(padded_labels)
+
+            batch["input_ids"] = torch.stack(input_ids)
+            batch["attention_mask"] = torch.stack(attention_masks)
+            batch["labels"] = torch.stack(labels)
             return batch
 
         self.trainer = Trainer(
@@ -415,9 +443,17 @@ class CPTTrainer:
 
         # Save final model
         final_dir = os.path.join(training_args.output_dir, "final")
+        # Restore the inference setting before serialization. KV caching is
+        # undesirable during training, but should remain enabled for fast
+        # autoregressive generation from the saved model.
+        if self._original_use_cache is not None:
+            self.model.config.use_cache = self._original_use_cache
         self.trainer.save_model(final_dir)
-        self.tokenizer.save_pretrained(final_dir)
-        logger.info(f"Final model saved to {final_dir}")
+        # Trainer's TPU-aware save is coordinated across ranks; only the world
+        # process zero may write tokenizer files afterwards.
+        if self.trainer.is_world_process_zero():
+            self.tokenizer.save_pretrained(final_dir)
+            logger.info(f"Final model saved to {final_dir}")
 
     def save_model(self, output_dir: str) -> None:
         """Save model and tokenizer to a directory.

@@ -6,6 +6,13 @@ and executes Continued Pre-Training on Qwen3.5-0.8B.
 Usage:
     python scripts/05_train_cpt.py
     python scripts/05_train_cpt.py --config configs/cpt_config.yaml --data-dir data/processed
+
+Kaggle TPU (PJRT):
+    PJRT_DEVICE=TPU XLA_USE_BF16=1 python scripts/05_train_cpt.py --data-dir /kaggle/working/data
+
+Do not wrap this command in ``torchrun`` or the removed ``xla_spawn`` launcher.
+``torch_xla.launch`` below owns process creation and selects the correct number
+of processes for the TPU topology exposed by the Kaggle runtime.
 """
 
 import argparse
@@ -104,21 +111,55 @@ def _load_dataset(config, env):
     return train_dataset
 
 
-def _is_tpu_available():
-    """Check if TPU (via torch_xla PJRT) is available."""
+def _is_tpu_requested():
+    """Return whether this process was explicitly launched for a PJRT TPU."""
     try:
-        import torch_xla.core.xla_model as xm  # noqa: F401
+        import torch_xla  # noqa: F401
         return os.environ.get("PJRT_DEVICE", "").upper() == "TPU"
     except ImportError:
         return False
 
 
 def _train_worker(config, train_dataset):
-    """Training worker — runs once per process (1 on GPU/CPU, 8 on TPU v5e-8)."""
+    """Training worker — runs on each device/process."""
     trainer = CPTTrainer(config)
     trainer.setup()
     trainer.train(train_dataset=train_dataset)
     logger.info("CPT Training successfully completed!")
+
+
+def _tpu_worker(index, config, env):
+    """Run once per process created by ``torch_xla.launch``.
+
+    PJRT decides how many processes are required for the actual TPU topology.
+    In particular, this must not be hard-coded to eight: a TPU chip can expose
+    more than one core and the correct process count varies by runtime version.
+    """
+    import torch_xla
+    import torch_xla.runtime as xr
+
+    world_size = xr.world_size()
+    global_ordinal = xr.global_ordinal()
+    is_primary = global_ordinal == 0
+
+    # Avoid eight workers concurrently truncating the same log file. Trainer
+    # itself emits distributed-aware progress logs from the world process zero.
+    setup_logging(
+        log_dir=str(project_root / "logs") if is_primary else None,
+        log_name="cpt_training",
+        console=is_primary,
+    )
+    logger.info(
+        "TPU PJRT worker initialized "
+        f"(launch_index={index}, global_ordinal={global_ordinal}, "
+        f"world_size={world_size}, device={torch_xla.device()})"
+    )
+
+    train_dataset = _load_dataset(config, env)
+    if train_dataset is None:
+        raise RuntimeError(f"[TPU worker {global_ordinal}] Dataset could not be loaded.")
+
+    _train_worker(config, train_dataset)
 
 
 def main():
@@ -139,42 +180,29 @@ def main():
     if args.data_dir:
         config["_cli_data_dir"] = args.data_dir
 
-    # Set up logging
+    # Do not open a shared log file before the PJRT launcher forks/spawns.  Each
+    # TPU worker configures logging in _tpu_worker, with only ordinal zero
+    # writing files and the notebook console.
     log_dir = str(project_root / "logs")
-    setup_logging(log_dir=log_dir, log_name="cpt_training")
+    setup_logging(log_dir=None if _is_tpu_requested() else log_dir, log_name="cpt_training")
 
     logger.info("=" * 60)
     logger.info(f"Starting Qwen3.5-0.8B CPT Training in [{env}] environment")
     logger.info("=" * 60)
 
-    # Load dataset (shared across all processes — HuggingFace datasets use
-    # memory-mapped Arrow files, so forked processes share the same memory)
-    train_dataset = _load_dataset(config, env)
-    if train_dataset is None:
-        return
+    if _is_tpu_requested():
+        # xla_spawn/xmp.spawn and xrt_world_size belong to the retired XRT
+        # workflow.  PJRT's supported entry point determines the topology and
+        # does not need --num_cores or a hand-written nprocs value.
+        import torch_xla
 
-    # ── Launch ──
-    if _is_tpu_available():
-        # TPU v5e-8: HuggingFace Trainer handles XLA multi-process internally
-        # when launched via xla_spawn. If we're already inside an xla_spawn
-        # child process (PJRT_DEVICE=TPU is set and xla is importable),
-        # Trainer will detect XLA and use xm.xrt_world_size() for DDP.
-        #
-        # The notebook cell MUST launch this script via:
-        #   python -m torch_xla.distributed.xla_spawn --num_cores 8 scripts/05_train_cpt.py ...
-        #
-        # If running directly (not via xla_spawn), auto-relaunch:
-        try:
-            import torch_xla.core.xla_model as xm
-            # If we can get here, we're inside an xla_spawn worker — proceed
-            logger.info(f"TPU worker started (ordinal={xm.get_local_ordinal()}, world_size={xm.xrt_world_size()})")
-            _train_worker(config, train_dataset)
-        except Exception as e:
-            logger.error(f"TPU training failed: {e}", exc_info=True)
-            raise
+        logger.info("PJRT TPU requested. Launching across the runtime-discovered TPU topology...")
+        torch_xla.launch(_tpu_worker, args=(config, env))
     else:
-        # GPU / CPU path — single process
-        _train_worker(config, train_dataset)
+        # GPU / CPU path.
+        train_dataset = _load_dataset(config, env)
+        if train_dataset is not None:
+            _train_worker(config, train_dataset)
 
 
 if __name__ == "__main__":
