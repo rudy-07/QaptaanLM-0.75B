@@ -86,38 +86,48 @@ def _load_dataset(config, env):
     train_dataset = None
     data_path = Path(data_dir) if data_dir else None
 
-    # If the specified path does not exist, look across all /kaggle/input/ mounts
-    if (not data_path or not data_path.exists()) and os.path.exists("/kaggle/input"):
-        kaggle_root = Path("/kaggle/input")
-        # Check if there are any arrow or parquet files anywhere under /kaggle/input
-        kaggle_shards = list(kaggle_root.rglob("*.arrow")) or list(kaggle_root.rglob("*.parquet"))
-        if kaggle_shards:
-            # Pick the deepest common parent or the parent directory of shards
-            data_path = kaggle_shards[0].parent
-            logger.info(f"Auto-detected Kaggle dataset shards at: {data_path}")
+    # Check if data_path exists and has arrow or parquet files
+    files_to_load = []
+    file_type = None
 
     if data_path and data_path.exists():
-        # 1. Try loading arrow/parquet files recursively
         arrow_files = sorted([str(f) for f in data_path.rglob("*.arrow") if not f.name.startswith(".")])
         parquet_files = sorted([str(f) for f in data_path.rglob("*.parquet") if not f.name.startswith(".")])
+        if arrow_files:
+            file_type = "arrow"
+            files_to_load = arrow_files
+        elif parquet_files:
+            file_type = "parquet"
+            files_to_load = parquet_files
 
-        if arrow_files or parquet_files:
-            file_type = "arrow" if arrow_files else "parquet"
-            files_to_load = arrow_files if arrow_files else parquet_files
-            logger.info(f"Found {len(files_to_load)} {file_type} shard files in {data_path}. Loading...")
-            # keep_in_memory=False ensures memory mapping from disk without duplicating full tables into RAM
-            train_dataset = load_dataset(file_type, data_files=files_to_load, split="train", keep_in_memory=False)
-            logger.info(f"✓ Loaded {len(train_dataset):,} packed training sequences.")
-        else:
-            # 2. Try load_from_disk (if saved with save_to_disk)
-            try:
-                from datasets import load_from_disk
-                train_dataset = load_from_disk(str(data_path), keep_in_memory=False)
-                if isinstance(train_dataset, dict):
-                    train_dataset = train_dataset.get("train", next(iter(train_dataset.values())))
-                logger.info(f"✓ Loaded {len(train_dataset):,} packed training sequences via load_from_disk.")
-            except Exception as e:
-                logger.warning(f"Could not load via load_from_disk: {e}")
+    # If not found in data_path, auto-search all /kaggle/input
+    if not files_to_load and os.path.exists("/kaggle/input"):
+        kaggle_root = Path("/kaggle/input")
+        arrow_files = sorted([str(f) for f in kaggle_root.rglob("*.arrow") if not f.name.startswith(".")])
+        parquet_files = sorted([str(f) for f in kaggle_root.rglob("*.parquet") if not f.name.startswith(".")])
+        if arrow_files:
+            file_type = "arrow"
+            files_to_load = arrow_files
+            logger.info(f"Auto-detected {len(files_to_load)} Arrow shard files across /kaggle/input")
+        elif parquet_files:
+            file_type = "parquet"
+            files_to_load = parquet_files
+            logger.info(f"Auto-detected {len(files_to_load)} Parquet shard files across /kaggle/input")
+
+    if files_to_load:
+        logger.info(f"Found {len(files_to_load)} {file_type} shard files. Memory-mapping directly from storage...")
+        train_dataset = load_dataset(file_type, data_files=files_to_load, split="train", keep_in_memory=False)
+        logger.info(f"✓ Loaded {len(train_dataset):,} packed training sequences.")
+    elif data_path and data_path.exists():
+        # Try load_from_disk (if saved with save_to_disk)
+        try:
+            from datasets import load_from_disk
+            train_dataset = load_from_disk(str(data_path), keep_in_memory=False)
+            if isinstance(train_dataset, dict):
+                train_dataset = train_dataset.get("train", next(iter(train_dataset.values())))
+            logger.info(f"✓ Loaded {len(train_dataset):,} packed training sequences via load_from_disk.")
+        except Exception as e:
+            logger.warning(f"Could not load via load_from_disk: {e}")
 
     if train_dataset is None:
         # Only treat as HF repo if it's in 'owner/dataset' format and NOT a filesystem path
