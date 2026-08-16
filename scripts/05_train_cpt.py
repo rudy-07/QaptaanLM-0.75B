@@ -59,6 +59,11 @@ try:
 except Exception:
     pass
 
+# Prevent multithreading IPC deadlocks and memory thrashing in multi-worker TPU runs
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+os.environ.setdefault("PYTHONUNBUFFERED", "1")
+
 from datasets import load_dataset, Dataset
 from src.training.trainer import CPTTrainer
 from src.utils.config import load_config, detect_environment
@@ -71,6 +76,7 @@ logger = logging.getLogger(__name__)
 
 def _load_dataset(config, env):
     """Load the training dataset. Shared by single-process and multi-process paths."""
+    import gc
     data_dir = None
     # Try CLI --data-dir first (stored in config by main)
     data_dir = config.get("_cli_data_dir")
@@ -99,13 +105,14 @@ def _load_dataset(config, env):
             file_type = "arrow" if arrow_files else "parquet"
             files_to_load = arrow_files if arrow_files else parquet_files
             logger.info(f"Found {len(files_to_load)} {file_type} shard files in {data_path}. Loading...")
-            train_dataset = load_dataset(file_type, data_files=files_to_load, split="train")
+            # keep_in_memory=False ensures memory mapping from disk without duplicating full tables into RAM
+            train_dataset = load_dataset(file_type, data_files=files_to_load, split="train", keep_in_memory=False)
             logger.info(f"✓ Loaded {len(train_dataset):,} packed training sequences.")
         else:
             # 2. Try load_from_disk (if saved with save_to_disk)
             try:
                 from datasets import load_from_disk
-                train_dataset = load_from_disk(str(data_path))
+                train_dataset = load_from_disk(str(data_path), keep_in_memory=False)
                 if isinstance(train_dataset, dict):
                     train_dataset = train_dataset.get("train", next(iter(train_dataset.values())))
                 logger.info(f"✓ Loaded {len(train_dataset):,} packed training sequences via load_from_disk.")
@@ -118,7 +125,7 @@ def _load_dataset(config, env):
             # Load directly from Hugging Face dataset repository
             hf_token = os.environ.get("HF_TOKEN")
             logger.info(f"Loading dataset directly from Hugging Face Hub: {data_dir}...")
-            train_dataset = load_dataset(str(data_dir), split="train", token=hf_token)
+            train_dataset = load_dataset(str(data_dir), split="train", token=hf_token, keep_in_memory=False)
             logger.info(f"✓ Loaded {len(train_dataset):,} packed training sequences from HF Hub.")
         else:
             logger.error(
@@ -127,6 +134,7 @@ def _load_dataset(config, env):
             )
             return None
 
+    gc.collect()
     return train_dataset
 
 

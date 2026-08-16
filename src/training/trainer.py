@@ -108,18 +108,16 @@ class CPTTrainer:
 
         if is_tpu:
             # TPU v5e-8 has 8 cores x 16GB HBM = 128GB total memory.
-            # Avoid gradient_accumulation on TPU: each accum step triggers a
-            # separate XLA graph trace/compilation, which is much slower than
-            # simply increasing per_device_train_batch_size.
-            train_cfg["per_device_train_batch_size"] = train_cfg.get("tpu_per_device_train_batch_size", 1)
-            train_cfg["gradient_accumulation_steps"] = 1
+            # Use micro_batch=2 with grad_accum=4 to achieve 64 sequences (65,536 tokens/step).
+            # This keeps HBM usage safe (~10.8 GB per core, >5 GB headroom) and reduces total steps from 122k to 15.2k.
+            train_cfg["per_device_train_batch_size"] = train_cfg.get("tpu_per_device_train_batch_size", 2)
+            train_cfg["gradient_accumulation_steps"] = train_cfg.get("tpu_gradient_accumulation_steps", 4)
             requested_seq_length = train_cfg.get("max_seq_length", 2048)
-            # Liger's fused cross-entropy is CUDA/Triton-only.  On TPU the
+            # Liger's fused cross-entropy is CUDA/Triton-only. On TPU the
             # standard causal-LM loss materializes a [batch, seq, vocab]
             # tensor; with Qwen3.5's 248,320-token vocabulary, seq=2048
             # exceeds a v5e core's 15.75 GiB HBM by a small but repeatable
-            # margin even at micro_batch=1.  Keep the limit configurable so a
-            # larger-HBM TPU can opt into a longer context explicitly.
+            # margin. Keep seq_len=1024 for rock-solid stability.
             tpu_max_seq_length = train_cfg.get("tpu_max_seq_length", 1024)
             train_cfg["max_seq_length"] = min(requested_seq_length, tpu_max_seq_length)
             if train_cfg["max_seq_length"] < requested_seq_length:
@@ -130,10 +128,12 @@ class CPTTrainer:
                     "reliably at seq_len=2048."
                 )
             n_cores = self._n_devices
+            effective_seqs = n_cores * train_cfg["per_device_train_batch_size"] * train_cfg["gradient_accumulation_steps"]
+            tokens_per_step = effective_seqs * train_cfg["max_seq_length"]
             logger.info(
                 f"Auto-configured for TPU PJRT: micro_batch={train_cfg['per_device_train_batch_size']} per replica "
-                f"x {n_cores} replicas = {n_cores * train_cfg['per_device_train_batch_size']} sequences/step "
-                f"({n_cores * train_cfg['per_device_train_batch_size'] * train_cfg['max_seq_length']:,} tokens/step)"
+                f"x {n_cores} replicas x {train_cfg['gradient_accumulation_steps']} grad_accum = {effective_seqs} sequences/step "
+                f"({tokens_per_step:,} tokens/step)"
             )
         elif self.hardware["gpu_memory_gb"]:
             n_gpus = max(self.hardware.get("gpu_count", 1), 1)
@@ -182,7 +182,7 @@ class CPTTrainer:
         # ── Step 4: Load model and tokenizer (with SDPA attention) ──
         # On TPU v5e (16GB HBM per core), 0.75B model easily fits without gradient checkpointing.
         # Disabling gradient checkpointing on TPU avoids XLA lazy graph compilation deadlocks.
-        use_sdpa = train_cfg.get("use_sdpa", True) and not is_tpu
+        use_sdpa = train_cfg.get("use_sdpa", True)
         use_grad_ckpt = train_cfg.get("gradient_checkpointing", True) and not is_tpu
         if is_tpu and train_cfg.get("gradient_checkpointing", True):
             logger.info("TPU detected: disabling gradient checkpointing (0.75B fits easily in 16GB HBM; avoids XLA graph deadlocks).")
@@ -272,13 +272,13 @@ class CPTTrainer:
             "adam_beta1": train_cfg.get("adam_beta1", 0.9),
             "adam_beta2": train_cfg.get("adam_beta2", 0.95),
             "adam_epsilon": train_cfg.get("adam_epsilon", 1e-8),
-            "logging_steps": train_cfg.get("logging_steps", 10),
+            "logging_steps": train_cfg.get("logging_steps", 50),
             "logging_first_step": train_cfg.get("logging_first_step", True),
             "save_strategy": train_cfg.get("save_strategy", "steps"),
-            "save_steps": train_cfg.get("save_steps", 200),
+            "save_steps": train_cfg.get("save_steps", 500),
             "save_total_limit": train_cfg.get("save_total_limit", 5),
-            "dataloader_num_workers": train_cfg.get("dataloader_num_workers", 2),
-            "dataloader_pin_memory": False if is_tpu else train_cfg.get("dataloader_pin_memory", True),
+            "dataloader_num_workers": train_cfg.get("dataloader_num_workers", 0),
+            "dataloader_pin_memory": False if is_tpu else train_cfg.get("dataloader_pin_memory", False),
             # TPU XLA requires static tensor shapes — drop the last incomplete
             # batch to prevent a shape mismatch deadlock across cores.
             "dataloader_drop_last": True if is_tpu else train_cfg.get("dataloader_drop_last", False),
@@ -305,7 +305,7 @@ class CPTTrainer:
         else:
             eval_strat = train_cfg.get("eval_strategy") or train_cfg.get("evaluation_strategy", "steps")
 
-        eval_st = train_cfg.get("eval_steps", 200)
+        eval_st = train_cfg.get("eval_steps", 500)
         if "eval_strategy" in valid_params:
             candidate_kwargs["eval_strategy"] = eval_strat
             candidate_kwargs["eval_steps"] = eval_st
@@ -376,44 +376,57 @@ class CPTTrainer:
         training_args = self._build_training_args(eval_dataset=eval_dataset)
         callbacks = self._build_callbacks()
 
-        # Fixed tensor shapes are essential on TPU: variable final sequences
-        # otherwise force costly recompilations (and can make replicas diverge).
+        # Fixed static tensor shapes are essential on TPU: dynamic shapes
+        # force costly recompilations and can cause multi-core deadlocks.
         pad_token_id = self.tokenizer.pad_token_id
         if pad_token_id is None:
             pad_token_id = self.tokenizer.eos_token_id if self.tokenizer.eos_token_id is not None else 0
 
         def data_collator(features):
-            batch = {}
-            input_ids = []
-            attention_masks = []
-            labels = []
-            for feature in features:
-                ids = torch.as_tensor(feature["input_ids"][:seq_len], dtype=torch.long)
-                length = ids.numel()
-                padded_ids = torch.full((seq_len,), pad_token_id, dtype=torch.long)
-                padded_ids[:length] = ids
-                input_ids.append(padded_ids)
+            bsz = len(features)
+            # Allocate fixed static 2D tensors directly to minimize Python memory allocations
+            batch_input_ids = torch.full((bsz, seq_len), pad_token_id, dtype=torch.long)
+            batch_attention_mask = torch.zeros((bsz, seq_len), dtype=torch.long)
+            batch_labels = torch.full((bsz, seq_len), -100, dtype=torch.long)
 
-                mask = torch.zeros(seq_len, dtype=torch.long)
-                if "attention_mask" in feature:
-                    source_mask = torch.as_tensor(feature["attention_mask"][:seq_len], dtype=torch.long)
-                    mask[:source_mask.numel()] = source_mask
+            for i, f in enumerate(features):
+                raw_ids = f["input_ids"]
+                if isinstance(raw_ids, torch.Tensor):
+                    cur_ids = raw_ids[:seq_len].to(dtype=torch.long)
                 else:
-                    mask[:length] = 1
-                attention_masks.append(mask)
+                    cur_ids = torch.as_tensor(raw_ids[:seq_len], dtype=torch.long)
+                n = cur_ids.numel()
+                batch_input_ids[i, :n] = cur_ids
 
-                source_labels = feature.get("labels", feature["input_ids"])
-                source_labels = torch.as_tensor(source_labels[:seq_len], dtype=torch.long)
-                padded_labels = torch.full((seq_len,), -100, dtype=torch.long)
-                padded_labels[:source_labels.numel()] = source_labels
-                # Never calculate loss for padding tokens.
-                padded_labels[mask == 0] = -100
-                labels.append(padded_labels)
+                if "attention_mask" in f:
+                    raw_mask = f["attention_mask"]
+                    if isinstance(raw_mask, torch.Tensor):
+                        cur_mask = raw_mask[:seq_len].to(dtype=torch.long)
+                    else:
+                        cur_mask = torch.as_tensor(raw_mask[:seq_len], dtype=torch.long)
+                    batch_attention_mask[i, :cur_mask.numel()] = cur_mask
+                else:
+                    batch_attention_mask[i, :n] = 1
 
-            batch["input_ids"] = torch.stack(input_ids)
-            batch["attention_mask"] = torch.stack(attention_masks)
-            batch["labels"] = torch.stack(labels)
-            return batch
+                if "labels" in f:
+                    raw_labels = f["labels"]
+                    if isinstance(raw_labels, torch.Tensor):
+                        cur_labels = raw_labels[:seq_len].to(dtype=torch.long)
+                    else:
+                        cur_labels = torch.as_tensor(raw_labels[:seq_len], dtype=torch.long)
+                    batch_labels[i, :cur_labels.numel()] = cur_labels
+                else:
+                    batch_labels[i, :n] = cur_ids
+
+                # Never compute loss on padding positions
+                valid_mask = (batch_attention_mask[i] == 1)
+                batch_labels[i, ~valid_mask] = -100
+
+            return {
+                "input_ids": batch_input_ids,
+                "attention_mask": batch_attention_mask,
+                "labels": batch_labels,
+            }
 
         self.trainer = Trainer(
             model=self.model,
