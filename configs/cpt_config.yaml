@@ -132,9 +132,12 @@ environment:
     # Do NOT use removed xla_spawn or torchrun --nproc_per_node=8: PJRT owns
     # process creation and discovers the TPU topology itself.
     # The 248k-token vocabulary makes the ordinary cross-entropy logits large;
-    # batch 1 is the conservative 16GB-HBM setting for a first uninterrupted run.
+    # batch 1 and seq_len 1024 are the conservative 16GB-HBM settings for a
+    # first uninterrupted TPU run.  Liger is CUDA-only, so TPU uses the
+    # ordinary unfused loss and must not use the GPU's 2048-token setting.
     # Per-replica batch size for TPU (grad_accum is forced to 1 at runtime):
     tpu_per_device_train_batch_size: 1
+    tpu_max_seq_length: 1024
 
   # Local (for testing only)
   local:

@@ -111,9 +111,24 @@ class CPTTrainer:
             # Avoid gradient_accumulation on TPU: each accum step triggers a
             # separate XLA graph trace/compilation, which is much slower than
             # simply increasing per_device_train_batch_size.
-            train_cfg["per_device_train_batch_size"] = train_cfg.get("tpu_per_device_train_batch_size", 4)
+            train_cfg["per_device_train_batch_size"] = train_cfg.get("tpu_per_device_train_batch_size", 1)
             train_cfg["gradient_accumulation_steps"] = 1
-            train_cfg["max_seq_length"] = train_cfg.get("max_seq_length", 2048)
+            requested_seq_length = train_cfg.get("max_seq_length", 2048)
+            # Liger's fused cross-entropy is CUDA/Triton-only.  On TPU the
+            # standard causal-LM loss materializes a [batch, seq, vocab]
+            # tensor; with Qwen3.5's 248,320-token vocabulary, seq=2048
+            # exceeds a v5e core's 15.75 GiB HBM by a small but repeatable
+            # margin even at micro_batch=1.  Keep the limit configurable so a
+            # larger-HBM TPU can opt into a longer context explicitly.
+            tpu_max_seq_length = train_cfg.get("tpu_max_seq_length", 1024)
+            train_cfg["max_seq_length"] = min(requested_seq_length, tpu_max_seq_length)
+            if train_cfg["max_seq_length"] < requested_seq_length:
+                logger.warning(
+                    "TPU v5e HBM safety cap: reducing max_seq_length from "
+                    f"{requested_seq_length} to {train_cfg['max_seq_length']} "
+                    "because the non-fused 248k-vocabulary loss does not fit "
+                    "reliably at seq_len=2048."
+                )
             n_cores = self._n_devices
             logger.info(
                 f"Auto-configured for TPU PJRT: micro_batch={train_cfg['per_device_train_batch_size']} per replica "
