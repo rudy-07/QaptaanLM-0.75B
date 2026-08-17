@@ -57,7 +57,7 @@ dataset_info:
 [![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Tokens](https://img.shields.io/badge/Tokens-1%20Billion-blue.svg)](#dataset-composition)
 [![Languages](https://img.shields.io/badge/Languages-13%20Programming%20%2B%20English-orange.svg)](#target-languages)
-[![Associated Model](https://img.shields.io/badge/%F0%9F%A4%97%20Model-QaptaanLM--0.75B-purple.svg)](https://github.com/rudy-07/QaptaanLM-0.75B)
+[![Associated Model](https://img.shields.io/badge/Model-QaptaanLM--0.75B-purple.svg)](https://github.com/rudy-07/QaptaanLM-0.75B)
 
 **KapCode-1B** is a high-quality, 1-billion-token curated dataset designed for **Continued Pre-Training (CPT)** and domain adaptation of compact Large Language Models. Engineered specifically to empower models under 1 billion parameters with robust code generation, technical comprehension, mathematical reasoning, and Fill-in-the-Middle (FIM) infilling capabilities, KapCode-1B combines multi-lingual code, architecture documentation, function-level snippets, high-quality STEM web text, and formal mathematical proofs.
 
@@ -66,18 +66,18 @@ dataset_info:
 ## Dataset Overview
 
 - **Repository**: `kaptaan45/KapCode-1B`
-- **Total Usable Tokens**: $1,000,000,000$ (1 Billion) post-filtering and deduplication
+- **Total Usable Tokens**: 1,000,000,000 (1 Billion) post-filtering and deduplication
 - **Packed Sequence Length**: 4096 tokens per sequence
 - **Total Packed Sequences**: 244,140 sequences
 - **Primary Formats**: Memory-mapped Apache Arrow (`.arrow`) and Apache Parquet (`.parquet`) shards (~50MB / 2,000 sequences per shard)
-- **Tokenization Schema**: Qwen3.5 BPE Vocabulary ($V = 248,320$) with `<|endoftext|>` sequence separators and `<|fim_prefix|>`, `<|fim_middle|>`, `<|fim_suffix|>` delimiters
+- **Tokenization Schema**: Qwen3.5 BPE Vocabulary (Vocab Size = 248,320) with `<|endoftext|>` sequence separators and `<|fim_prefix|>`, `<|fim_middle|>`, `<|fim_suffix|>` delimiters
 - **Primary Use Case**: Full-parameter Continued Pre-Training (CPT) for models such as [QaptaanLM-0.75B](https://github.com/rudy-07/QaptaanLM-0.75B).
 
 ---
 
 ## Motivation
 
-Training or adapting compact language models ($\le 1\text{B}$ parameters) requires substantially higher data quality and signal density than larger models. Unfiltered code repositories often contain repetitive auto-generated files, minified build outputs, vendor directories, lockfiles, and broken syntax that degrade model performance. 
+Training or adapting compact language models (under 1B parameters) requires substantially higher data quality and signal density than larger models. Unfiltered code repositories often contain repetitive auto-generated files, minified build outputs, vendor directories, lockfiles, and broken syntax that degrade model performance. 
 
 KapCode-1B was constructed to address this by:
 1. **Curating High-Signal Data**: Selecting balanced proportions across complete source code, developer documentation, function-level code with docstrings, technical web articles, and mathematical reasoning.
@@ -100,13 +100,16 @@ KapCode-1B is composed of five specialized partitions sampled according to targe
 | **Mathematical Reasoning** | `open-web-math/open-web-math` | **10%** | 100,000,000 | LaTeX equations, step-by-step mathematical proofs, and literature |
 | **Total** | | **100%** | **1,000,000,000** | |
 
-```mermaid
-pie title KapCode-1B Token Allocation
-    "Stack v3 Code (35%)" : 35
-    "Stack v3 Documentation (20%)" : 20
-    "The Vault Functions (20%)" : 20
-    "FineWeb-HQ (15%)" : 15
-    "OpenWebMath (10%)" : 10
+```text
++-----------------------------------------------------------------------------+
+|                         KapCode-1B Token Allocation                         |
++-----------------------------------------------------------------------------+
+|  [===========================] Stack v3 Code (35% - 350M tokens)            |
+|  [================]            Stack v3 Documentation (20% - 200M tokens)   |
+|  [================]            The Vault Functions (20% - 200M tokens)      |
+|  [============]                FineWeb-HQ (15% - 150M tokens)               |
+|  [========]                    OpenWebMath (10% - 100M tokens)              |
++-----------------------------------------------------------------------------+
 ```
 
 ---
@@ -135,20 +138,50 @@ Within the code subsets, 13 programming languages and infrastructure configurati
 
 ## Curation and Processing Pipeline
 
-```mermaid
-flowchart TD
-    A[Upstream Streaming Datasets] --> B[Stage 1: Heuristic & Extension Filters]
-    B --> C[Stage 2: FastText Language Identification]
-    C --> D[Stage 3: SHA-256 Exact Content Deduplication]
-    D --> E[Stage 4: Fill-in-the-Middle 50% Transformation]
-    E --> F[Stage 5: Deficit-Based Weighted Stream Mixing]
-    F --> G[Stage 6: Multi-Document Sequence Packing 4096 Tokens]
-    G --> H[Stage 7: Arrow / Parquet Shard Serialization]
+```text
++------------------------------------------------------------------------+
+| 1. Upstream Streaming Ingestion (5 Data Sources)                       |
++------------------------------------------------------------------------+
+                                   |
+                                   v
++------------------------------------------------------------------------+
+| 2. Heuristic & Structural Filtering (Size, Lines, Alphanumeric Density) |
++------------------------------------------------------------------------+
+                                   |
+                                   v
++------------------------------------------------------------------------+
+| 3. Language Identification (FastText LID: English Confidence >= 0.70)  |
++------------------------------------------------------------------------+
+                                   |
+                                   v
++------------------------------------------------------------------------+
+| 4. Deduplication (Exact SHA-256 Whitespace-Normalized Hashing)         |
++------------------------------------------------------------------------+
+                                   |
+                                   v
++------------------------------------------------------------------------+
+| 5. Fill-in-the-Middle (50% Random Prefix-Suffix-Middle Transformation)  |
++------------------------------------------------------------------------+
+                                   |
+                                   v
++------------------------------------------------------------------------+
+| 6. Deficit-Based Weighted Stream Mixing (Target Proportions)           |
++------------------------------------------------------------------------+
+                                   |
+                                   v
++------------------------------------------------------------------------+
+| 7. Multi-Document Sequence Packing (4096 Tokens + <|endoftext|>)       |
++------------------------------------------------------------------------+
+                                   |
+                                   v
++------------------------------------------------------------------------+
+| 8. Shard Serialization (Memory-Mapped Apache Arrow / Parquet Shards)   |
++------------------------------------------------------------------------+
 ```
 
 ### 1. Heuristic and Structural Filtering
-- **File Size Bounds**: Files $< 100\text{ bytes}$ or $> 1\text{ MB}$ are excluded.
-- **Line Constraints**: Rejects documents with lines exceeding 1,000 characters, or files with $< 3$ lines or $> 10,000$ lines.
+- **File Size Bounds**: Files smaller than 100 bytes or larger than 1 MB are excluded.
+- **Line Constraints**: Rejects documents with lines exceeding 1,000 characters, or files with fewer than 3 lines or more than 10,000 lines.
 - **Alphanumeric Density**:
   - Code: Minimum 25% alphanumeric characters.
   - Documentation: Minimum 50% alphanumeric characters.
@@ -158,7 +191,7 @@ flowchart TD
 
 ### 2. Language Identification (LID)
 - Uses FastText (`lid.176.bin`) to classify human language in documentation and web partitions.
-- Documents with an English probability score $< 0.70$ ($< 0.60$ for LaTeX-heavy mathematics) are eliminated.
+- Documents with an English probability score below 0.70 (below 0.60 for LaTeX-heavy mathematics) are eliminated.
 
 ### 3. Deduplication
 - **Exact Deduplication**: Computes SHA-256 hashes over whitespace-normalized content strings. Documents matching previously registered hashes are discarded.
@@ -198,7 +231,7 @@ flowchart TD
 ### 3. Mathematical Reasoning Record (LaTeX)
 ```json
 {
-  "text": "Theorem: For any positive integer $n$, the sum of the first $n$ odd positive integers equals $n^2$.\n\nProof by Mathematical Induction:\n1. Base Case: For $n = 1$, the first odd integer is $1 = 1^2$. The base case holds.\n2. Inductive Hypothesis: Assume the statement holds for $n = k$, that is,\n$$\\sum_{i=1}^{k} (2i - 1) = 1 + 3 + 5 + \\dots + (2k - 1) = k^2$$\n3. Inductive Step: We must prove the statement for $n = k + 1$:\n$$\\sum_{i=1}^{k+1} (2i - 1) = \\sum_{i=1}^{k} (2i - 1) + (2(k+1) - 1) = k^2 + 2k + 1 = (k + 1)^2$$\nThus, by mathematical induction, the statement holds for all $n \\in \\mathbb{Z}^+$. $\\blacksquare$",
+  "text": "Theorem: For any positive integer n, the sum of the first n odd positive integers equals n^2.\n\nProof by Mathematical Induction:\n1. Base Case: For n = 1, the first odd integer is 1 = 1^2. The base case holds.\n2. Inductive Hypothesis: Assume the statement holds for n = k, that is,\nsum_{i=1}^{k} (2i - 1) = 1 + 3 + 5 + ... + (2k - 1) = k^2\n3. Inductive Step: We must prove the statement for n = k + 1:\nsum_{i=1}^{k+1} (2i - 1) = sum_{i=1}^{k} (2i - 1) + (2(k+1) - 1) = k^2 + 2k + 1 = (k + 1)^2\nThus, by mathematical induction, the statement holds for all n in Z+.",
   "source": "openwebmath"
 }
 ```
@@ -275,6 +308,8 @@ KapCode-1B is released under the **Apache 2.0 License**.
 
 ## Citation
 
+To cite the **KapCode-1B** dataset:
+
 ```bibtex
 @misc{kapcode1b2026,
   title   = {{KapCode-1B}: A Curated 1-Billion Token Dataset for Compact Code Models},
@@ -284,6 +319,8 @@ KapCode-1B is released under the **Apache 2.0 License**.
   note    = {Hugging Face Dataset}
 }
 ```
+
+To cite the **QaptaanLM-0.75B** model:
 
 ```bibtex
 @misc{qaptaanlm2026,

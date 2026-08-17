@@ -52,7 +52,7 @@
 Modern software development requires localized, low-latency, and memory-efficient language models capable of running directly on developer workstations and edge accelerators without sacrificing code synthesis quality. 
 
 QaptaanLM-0.75B targets this requirement by combining:
-1. **Hybrid Linear Attention (Gated DeltaNet + Gated GQA)**: Incorporates a 3:1 ratio of linear attention layers (Gated DeltaNet) to standard grouped-query attention (GQA) layers, maintaining linear $O(N)$ computational and memory complexity across extended sequences while preserving associative recall and multi-hop reasoning.
+1. **Hybrid Linear Attention (Gated DeltaNet + Gated GQA)**: Incorporates a 3:1 ratio of linear attention layers (Gated DeltaNet) to standard grouped-query attention (GQA) layers, maintaining linear O(N) computational and memory complexity across extended sequences while preserving associative recall and multi-hop reasoning.
 2. **Text-Only Parameter Optimization**: Strips the vision transformer components from the base model, reducing parameter count from ~870M to **752M parameters** (`Qwen3_5ForCausalLM`), maximizing training throughput and fitting within tight memory constraints.
 3. **Rigorous Data Mixture (~1B Tokens)**: Curated from five upstream sources with exact SHA-256 deduplication, language filtering via FastText, code quality heuristics, and 50% Fill-in-the-Middle (FIM) training.
 4. **Production-Grade Tooling**: Portable execution across NVIDIA GPUs (via PyTorch SDPA and Triton Liger Kernel) and Google TPU v5e-8 pods (via PyTorch/XLA PJRT distributed execution).
@@ -170,16 +170,16 @@ flowchart LR
 | **Base Model** | `Qwen/Qwen3.5-0.8B-Base` | Base revision `dc7cdfe2ee4154fa7e30f5b51ca41bfa40174e68` |
 | **Total Parameters** | **752,382,976 (752M)** | Vision transformer stripped via `Qwen3_5ForCausalLM` |
 | **Trainable Parameters** | 752,382,976 | Full-parameter Continued Pre-Training (no LoRA) |
-| **Hidden Size ($d_{model}$)** | 1024 | Base hidden dimension |
-| **Intermediate Size ($d_{ffn}$)** | 3584 | SwiGLU activation function |
+| **Hidden Size (d_model)** | 1024 | Base hidden dimension |
+| **Intermediate Size (d_ffn)** | 3584 | SwiGLU activation function |
 | **Total Layers** | 24 | 18 Linear Attention + 6 Full Attention layers |
 | **Full Attention Heads** | 8 Query / 2 Key-Value | Grouped-Query Attention (4:1 query-to-KV ratio) |
 | **Full Attention Head Dim** | 256 | Query head dimension |
 | **Linear Attention Heads** | 16 QK / 16 V | Gated DeltaNet (128 head dim, conv kernel dim 4) |
 | **Context Length** | 262,144 tokens (256K native) | Tested up to 4096 packed sequences in CPT |
 | **Vocabulary Size** | 248,320 tokens | Tied input/output word embeddings |
-| **Rotary Position Embedding** | Interleaved M-RoPE | $\theta = 10,000,000$, partial rotary factor 0.25 |
-| **Normalization** | RMSNorm ($\epsilon = 1\times 10^{-6}$) | Pre-layer normalization |
+| **Rotary Position Embedding** | Interleaved M-RoPE | theta = 10,000,000, partial rotary factor 0.25 |
+| **Normalization** | RMSNorm (eps = 1e-6) | Pre-layer normalization |
 | **Primary Tokenizer** | BPE Tokenizer | Includes FIM tokens and chat delimiters |
 | **Precision Support** | `float32`, `fp16` (NVIDIA T4), `bfloat16` (A100/TPU) | Auto-configured per accelerator |
 
@@ -224,11 +224,11 @@ Within the code partitions (Stack v3 Code and The Vault), files are sampled acco
 
 1. **Repository Filtering**: Excludes repository forks and vendor subtrees (`vendor/`, `node_modules/`, `dist/`, `build/`).
 2. **File Quality Heuristics**:
-   - File size constraints: $100\text{ bytes} \le \text{size} \le 1\text{ MB}$.
+   - File size constraints: 100 bytes <= size <= 1 MB.
    - Line length limits: Maximum 1,000 characters per line.
    - Line count bounds: Minimum 3 lines, maximum 10,000 lines.
    - Alphanumeric density: Minimum 25% alphanumeric characters for code, 50% for documentation, 60% for general web text.
-3. **Language Identification**: FastText LID (`lid.176.bin`) rejects non-English prose in documentation and web partitions with confidence threshold $\ge 0.70$.
+3. **Language Identification**: FastText LID (`lid.176.bin`) rejects non-English prose in documentation and web partitions with confidence threshold >= 0.70.
 4. **Boilerplate Stripping**: Regular-expression removal of legal notices, license headers, cookie consent text, and navigation breadcrumbs.
 5. **Exact Deduplication**: SHA-256 hash tracking over whitespace-normalized content blocks to eliminate exact duplicates across repositories and splits.
 
@@ -246,7 +246,7 @@ To equip the model with code infilling and multi-line completion capabilities, *
 
 ### Speed and Memory Optimizations
 
-- **Liger Kernel Integration**: Custom Triton kernels fuse Cross-Entropy Loss computation directly with vocabulary projection, eliminating the intermediate $[B \times S, 248320]$ logits tensor. This reduces VRAM by **40% to 60%** during backward passes and improves training throughput by 15%–20%.
+- **Liger Kernel Integration**: Custom Triton kernels fuse Cross-Entropy Loss computation directly with vocabulary projection, eliminating the intermediate [B x S, 248320] logits tensor. This reduces VRAM by **40% to 60%** during backward passes and improves training throughput by 15%–20%.
 - **PyTorch SDPA**: Native Scaled Dot-Product Attention selects the optimal GPU execution kernel (FlashAttention or memory-efficient attention).
 - **Google TPU v5e-8 PJRT Distributed Execution**: Utilizes `torch_xla.launch` to orchestrate 8 TPU v5e cores across 128 GB HBM with native hardware `bfloat16` precision, completing 1B tokens in ~2–4 hours.
 - **Sequence Packing**: Packs multiple documents up to 4096 tokens delimited by `<|endoftext|>` to eliminate padding token overhead.
@@ -256,16 +256,16 @@ To equip the model with code infilling and multi-line completion capabilities, *
 | Parameter | Configuration |
 | :--- | :--- |
 | **Optimization Objective** | Causal Language Modeling (Full-Parameter CPT) |
-| **Optimizer** | AdamW (`adamw_torch` or `paged_adamw_8bit` on $\le 16\text{GB}$ GPUs) |
-| **Optimizer Betas / Epsilon** | $\beta_1 = 0.9$, $\beta_2 = 0.95$, $\epsilon = 1\times 10^{-8}$ |
-| **Peak Learning Rate** | $2.0 \times 10^{-5}$ ($2\text{e-5}$) |
-| **LR Schedule** | Cosine decay to $10\%$ ($2.0 \times 10^{-6}$) |
-| **Warmup Ratio** | $2\%$ of total training steps |
-| **Weight Decay** | $0.01$ |
-| **Gradient Clipping** | Maximum gradient norm $1.0$ |
-| **Target Tokens** | $1,000,000,000$ ($1\text{B}$) |
-| **Sequence Length** | $2048$ tokens (GPU) / $1024$ tokens (TPU static shape) |
-| **Effective Batch Size** | 32 sequences ($65,536\text{ tokens/step}$ on GPU) |
+| **Optimizer** | AdamW (`adamw_torch` or `paged_adamw_8bit` on <= 16GB GPUs) |
+| **Optimizer Betas / Epsilon** | beta1 = 0.9, beta2 = 0.95, eps = 1e-8 |
+| **Peak Learning Rate** | 2.0e-5 |
+| **LR Schedule** | Cosine decay to 10% (2.0e-6) |
+| **Warmup Ratio** | 2% of total training steps |
+| **Weight Decay** | 0.01 |
+| **Gradient Clipping** | Maximum gradient norm 1.0 |
+| **Target Tokens** | 1,000,000,000 (1B) |
+| **Sequence Length** | 2048 tokens (GPU) / 1024 tokens (TPU static shape) |
+| **Effective Batch Size** | 32 sequences (65,536 tokens/step on GPU) |
 | **Gradient Checkpointing** | Enabled |
 
 ### Hardware Configurations
@@ -455,7 +455,7 @@ The evaluation harness in `src/evaluation/benchmarks.py` tracks model progress a
 
 | Benchmark Category | Benchmark Suite | Evaluation Metric | Baseline Protocol |
 | :--- | :--- | :---:| :--- |
-| **Code Generation** | HumanEval | `pass@1` | Zero-shot greedy decoding ($T=0.0$) |
+| **Code Generation** | HumanEval | `pass@1` | Zero-shot greedy decoding (T = 0.0) |
 | **Code Generation** | MBPP | `pass@1` | 3-shot prompt execution |
 | **Mathematical Reasoning** | GSM8K | `Accuracy` | 5-shot Chain-of-Thought reasoning |
 | **General & Technical STEM** | MMLU (CS / Math / Eng) | `Accuracy` | 5-shot multiple choice evaluation |
