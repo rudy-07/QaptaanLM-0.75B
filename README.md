@@ -236,7 +236,9 @@ Within the code partitions (Stack v3 Code and The Vault), files are sampled acco
 
 To equip the model with code infilling and multi-line completion capabilities, **50% of all code samples** undergo Prefix-Suffix-Middle (PSM) formatting using the tokenizer's native special tokens:
 
-$$\text{Input Sequence} = \texttt{<|fim\_prefix|>} + \text{Prefix} + \texttt{<|fim\_suffix|>} + \text{Suffix} + \texttt{<|fim\_middle|>} + \text{Middle}$$
+```text
+<|fim_prefix|>Prefix Content<|fim_suffix|>Suffix Content<|fim_middle|>Middle Content
+```
 
 ---
 

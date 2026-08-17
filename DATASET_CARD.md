@@ -4,6 +4,9 @@ task_categories:
 - text-generation
 language:
 - en
+- code
+tags:
+- code
 - python
 - typescript
 - javascript
@@ -17,8 +20,6 @@ language:
 - html
 - css
 - dockerfile
-tags:
-- code
 - pretraining
 - continued-pretraining
 - fill-in-the-middle
