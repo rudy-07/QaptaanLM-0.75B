@@ -129,10 +129,11 @@ environment:
     # → 65,536 tokens/step → ~15,258 steps for 1B tokens
     #
     # TPU v5e-8 / PJRT: scripts/05_train_cpt.py invokes torch_xla.launch.
-    # micro_batch=2, grad_accum=4 across 8 TPU cores = 64 sequences = 65,536 tokens/step
-    # → 15,258 steps total (~5-8 hours total on TPU v5e-8).
-    tpu_per_device_train_batch_size: 2
-    tpu_gradient_accumulation_steps: 4
+    # micro_batch=1, grad_accum=1 across 8 TPU cores = 8,192 tokens/step.
+    # Combined with eager attention and zero-copy collation, this compiles cleanly
+    # in ~4GB HBM with zero XLA padding expansion or OOM.
+    tpu_per_device_train_batch_size: 1
+    tpu_gradient_accumulation_steps: 1
     tpu_max_seq_length: 1024
     logging_steps: 50
 

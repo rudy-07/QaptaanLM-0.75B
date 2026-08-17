@@ -108,10 +108,11 @@ class CPTTrainer:
 
         if is_tpu:
             # TPU v5e-8 has 8 cores x 16GB HBM = 128GB total memory.
-            # Use micro_batch=2 with grad_accum=4 to achieve 64 sequences (65,536 tokens/step).
-            # This keeps HBM usage safe (~10.8 GB per core, >5 GB headroom) and reduces total steps from 122k to 15.2k.
-            train_cfg["per_device_train_batch_size"] = train_cfg.get("tpu_per_device_train_batch_size", 2)
-            train_cfg["gradient_accumulation_steps"] = train_cfg.get("tpu_gradient_accumulation_steps", 4)
+            # micro_batch=1, grad_accum=1 per core = 8 sequences (8,192 tokens/step).
+            # With eager attention and zero-copy collation, this uses only ~4GB HBM
+            # per core, compiling in seconds with zero padding expansion or OOM.
+            train_cfg["per_device_train_batch_size"] = train_cfg.get("tpu_per_device_train_batch_size", 1)
+            train_cfg["gradient_accumulation_steps"] = train_cfg.get("tpu_gradient_accumulation_steps", 1)
             requested_seq_length = train_cfg.get("max_seq_length", 2048)
             # Liger's fused cross-entropy is CUDA/Triton-only. On TPU the
             # standard causal-LM loss materializes a [batch, seq, vocab]
@@ -179,10 +180,10 @@ class CPTTrainer:
         else:
             train_cfg["dataloader_num_workers"] = train_cfg.get("dataloader_num_workers", 0)
 
-        # ── Step 4: Load model and tokenizer (with SDPA attention) ──
-        # On TPU v5e (16GB HBM per core), 0.75B model easily fits without gradient checkpointing.
-        # Disabling gradient checkpointing on TPU avoids XLA lazy graph compilation deadlocks.
-        use_sdpa = train_cfg.get("use_sdpa", True)
+        # ── Step 4: Load model and tokenizer (with SDPA on GPU, Eager on TPU) ──
+        # On TPU, PyTorch's SDPA decomposition creates 5D dynamic slices with 8x padding expansion.
+        # Standard eager attention maps directly to TPU matrix multiplications with 0% padding expansion.
+        use_sdpa = train_cfg.get("use_sdpa", True) and not is_tpu
         use_grad_ckpt = train_cfg.get("gradient_checkpointing", True) and not is_tpu
         if is_tpu and train_cfg.get("gradient_checkpointing", True):
             logger.info("TPU detected: disabling gradient checkpointing (0.75B fits easily in 16GB HBM; avoids XLA graph deadlocks).")
