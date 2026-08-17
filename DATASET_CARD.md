@@ -35,7 +35,7 @@ configs:
 - config_name: default
   data_files:
   - split: train
-    path: "data/train/*"
+    path: "*.arrow"
 dataset_info:
   features:
   - name: input_ids
