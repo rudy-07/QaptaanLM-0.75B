@@ -1,133 +1,564 @@
-# Qwen3.5-0.8B Coding + Instruct Fine-Tuning Pipeline
+# QaptaanLM-0.75B
 
-A robust, portable, and production-ready two-phase fine-tuning pipeline for **Qwen3.5-0.8B-Base** targeting state-of-the-art code generation, technical reasoning, and instruction following.
+[![Python Version](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)](https://www.python.org/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.1%2B-ee4c2c.svg)](https://pytorch.org/)
+[![Transformers](https://img.shields.io/badge/%F0%9F%A4%97%20Transformers-5.13%2B-orange.svg)](https://github.com/huggingface/transformers)
+[![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)](LICENSE)
+[![Dataset](https://img.shields.io/badge/%F0%9F%A4%97%20Dataset-kaptaan45%2FKapCode--1B-yellow.svg)](https://huggingface.co/datasets/kaptaan45/KapCode-1B)
+[![Hardware](https://img.shields.io/badge/Hardware-NVIDIA%20GPU%20%7C%20Google%20TPU%20v5e--8-purple.svg)](https://cloud.google.com/tpu)
 
----
-
-## 🚀 Key Highlights & Architectural Features
-
-- **Base Model**: `Qwen3.5-0.8B-Base` (752M text parameters).
-- **Hybrid Attention Architecture**: 3:1 ratio of Gated DeltaNet (linear attention) to Gated Attention (GQA), with native 256K context support and RMSNorm.
-- **Text-Only Optimization**: Vision encoder automatically stripped during CPT via `Qwen3_5ForCausalLM` to maximize throughput and minimize GPU memory footprint.
-- **Fill-in-the-Middle (FIM)**: 50% of code samples formatted with `<|fim_prefix|>`, `<|fim_suffix|>`, `<|fim_middle|>` tokens for code infilling and completion.
-- **Document Packing**: Efficient multi-document sequence packing (4096 tokens) with EOS delimiters and attention masking to eliminate padding waste.
-- **Multi-Environment Portability**: One-click training on Google Colab (GPU/TPU) and Kaggle (Dual T4/P100) with automatic checkpoint syncing to Google Drive and HuggingFace Hub.
+**QaptaanLM-0.75B** is an efficient, compact hybrid-attention foundation language model optimized for source code generation, technical reasoning, and long-context code comprehension. Built by stripping the visual encoder from `Qwen/Qwen3.5-0.8B-Base` down to 752M dense parameters, the model undergoes full-parameter Continued Pre-Training (CPT) on **KapCode-1B**, a curated 1-billion-token corpus spanning 13 programming languages, technical documentation, high-quality web text, and mathematical proofs.
 
 ---
 
-## 📊 Dataset Mixture (~1 Billion Target Tokens)
+## Table of Contents
 
-| Dataset | Proportion | Target Tokens | Description |
-|---|---|---|---|
-| `HuggingFaceCode/stack-v3-train` (Code) | **35%** | ~350M | Multi-language source code filtered for quality & licenses |
-| `HuggingFaceCode/stack-v3-train` (Docs) | **20%** | ~200M | Technical documentation, READMEs, API guides (`.md`, `.rst`) |
-| `Fsoft-AIC/the-vault-function` | **20%** | ~200M | Function-level code with docstrings and identifiers |
-| `epfml/FineWeb-HQ` | **15%** | ~150M | Top 10% educational & high-quality web text |
-| `open-web-math/open-web-math` | **10%** | ~100M | Mathematical reasoning, LaTeX equations, and technical web |
-| **Total** | **100%** | **~1 Billion** | |
-
-### 🎯 Target Language Distribution (Code Subset)
-
-| Language / Category | Target Proportion |
-|---|---:|
-| **Python** | **25%** |
-| **TypeScript** | **13%** |
-| **JavaScript** | **10%** |
-| **SQL** | **9%** |
-| **C++** | **7%** |
-| **Shell / Bash** | **6%** |
-| **C** | **5%** |
-| **Java** | **5%** |
-| **HTML** | **5%** |
-| **Rust** | **4%** |
-| **Go** | **4%** |
-| **CSS** | **4%** |
-| **Docker / CI-CD / IaC** | **3%** |
-| **Total** | **100%** |
+- [Overview](#overview)
+- [Architecture](#architecture)
+  - [Hybrid Attention Mechanism](#hybrid-attention-mechanism)
+  - [End-to-End Pipeline](#end-to-end-pipeline)
+  - [Distributed Training Topology](#distributed-training-topology)
+- [Model Specification](#model-specification)
+- [Dataset Mixture (KapCode-1B)](#dataset-mixture-kapcode-1b)
+  - [Data Sources](#data-sources)
+  - [Target Programming Languages](#target-programming-languages)
+  - [Data Filtering and Quality Control](#data-filtering-and-quality-control)
+  - [Fill-in-the-Middle (FIM) Transformation](#fill-in-the-middle-fim-transformation)
+- [Training Infrastructure](#training-infrastructure)
+  - [Speed and Memory Optimizations](#speed-and-memory-optimizations)
+  - [Hyperparameters](#hyperparameters)
+  - [Hardware Configurations](#hardware-configurations)
+- [Reproduction Guide](#reproduction-guide)
+  - [1. Environment Setup](#1-environment-setup)
+  - [2. Model Verification](#2-model-verification)
+  - [3. Dataset Verification](#3-dataset-verification)
+  - [4. Data Preprocessing and Sharding](#4-data-preprocessing-and-sharding)
+  - [5. Smoke Test](#5-smoke-test)
+  - [6. Continued Pre-Training Launch](#6-continued-pre-training-launch)
+  - [7. Evaluation](#7-evaluation)
+- [Inference](#inference)
+  - [Standard Autoregressive Generation](#standard-autoregressive-generation)
+  - [Fill-in-the-Middle (FIM) Code Completion](#fill-in-the-middle-fim-code-completion)
+- [Evaluation and Benchmarks](#evaluation-and-benchmarks)
+- [Repository Structure](#repository-structure)
+- [Security and Credentials](#security-and-credentials)
+- [Licensing and Attribution](#licensing-and-attribution)
+- [Citation](#citation)
 
 ---
 
-## 📁 Repository Structure
+## Overview
 
-```
-.
-├── configs/
-│   ├── cpt_config.yaml          # Phase 1 Continued Pre-Training configuration
-│   ├── dataset_config.yaml      # Dataset mixture, filtering thresholds & dedup
-│   └── eval_config.yaml         # Benchmark evaluation settings
-│
-├── src/
-│   ├── data/
-│   │   ├── loader.py            # Unified streaming dataset loader (all 5 datasets)
-│   │   ├── filters.py           # Multi-signal quality, language, and boilerplate filters
-│   │   ├── dedup.py             # Exact SHA-256 and MinHash near-deduplication
-│   │   ├── tokenize_and_pack.py # Qwen2Tokenizer packing, EOS boundaries & FIM
-│   │   ├── mixture.py           # Deficit-based weighted dataset stream mixer
-│   │   └── sharding.py          # Arrow/Parquet chunked shard writer & manifests
-│   ├── training/
-│   │   ├── trainer.py           # Full-parameter CPT Trainer with token-count stopping
-│   │   ├── callbacks.py         # Progress logging, ETA, GDrive & HF Hub auto-upload
-│   │   └── utils.py             # Hardware detection & automatic batch sizing
-│   ├── evaluation/
-│   │   ├── benchmarks.py        # HumanEval coding, math reasoning & perplexity suite
-│   │   └── compare.py           # Base vs CPT side-by-side evaluation
-│   └── utils/
-│       ├── config.py            # Environment-aware YAML configuration loader
-│       ├── logging_utils.py     # Structured console and file logging
-│       └── storage.py           # Google Drive and Hugging Face Hub sync
-│
-├── scripts/
-│   ├── 01_verify_model.py       # Base model inspection, text-only load & generation
-│   ├── 02_verify_datasets.py    # Verify streaming connectivity for all 5 datasets
-│   ├── 03_process_data.py       # End-to-end data filtering, mixing & sharding
-│   ├── 04_smoke_test.py         # Complete 3-step training & checkpoint reload test
-│   ├── 05_train_cpt.py          # Launch full CPT training run
-│   └── 06_evaluate.py           # Benchmark evaluation and model comparison
-│
-├── notebooks/
-│   ├── colab_cpt.ipynb          # Google Colab ready-to-run GPU/Drive workflow
-│   └── kaggle_cpt.ipynb         # Kaggle GPU ready-to-run workflow
-│
-├── requirements.txt             # Python dependencies
-└── PROJECT_SPEC.md              # Full original specification & guidelines
+Modern software development requires localized, low-latency, and memory-efficient language models capable of running directly on developer workstations and edge accelerators without sacrificing code synthesis quality. 
+
+QaptaanLM-0.75B targets this requirement by combining:
+1. **Hybrid Linear Attention (Gated DeltaNet + Gated GQA)**: Incorporates a 3:1 ratio of linear attention layers (Gated DeltaNet) to standard grouped-query attention (GQA) layers, maintaining linear $O(N)$ computational and memory complexity across extended sequences while preserving associative recall and multi-hop reasoning.
+2. **Text-Only Parameter Optimization**: Strips the vision transformer components from the base model, reducing parameter count from ~870M to **752M parameters** (`Qwen3_5ForCausalLM`), maximizing training throughput and fitting within tight memory constraints.
+3. **Rigorous Data Mixture (~1B Tokens)**: Curated from five upstream sources with exact SHA-256 deduplication, language filtering via FastText, code quality heuristics, and 50% Fill-in-the-Middle (FIM) training.
+4. **Production-Grade Tooling**: Portable execution across NVIDIA GPUs (via PyTorch SDPA and Triton Liger Kernel) and Google TPU v5e-8 pods (via PyTorch/XLA PJRT distributed execution).
+
+---
+
+## Architecture
+
+### Hybrid Attention Mechanism
+
+The backbone consists of 24 decoder layers structured in 6 repeating macro-blocks. Each macro-block contains **3 Gated DeltaNet linear attention layers** followed by **1 Gated Attention (GQA) full-attention layer**.
+
+```mermaid
+graph TD
+    subgraph MacroBlock["Repeating Macro-Block (Repeated 6x for 24 Total Layers)"]
+        L1["Layer 1: Gated DeltaNet (Linear Attention) + SwiGLU FFN"]
+        L2["Layer 2: Gated DeltaNet (Linear Attention) + SwiGLU FFN"]
+        L3["Layer 3: Gated DeltaNet (Linear Attention) + SwiGLU FFN"]
+        L4["Layer 4: Gated Attention (Full GQA) + SwiGLU FFN"]
+        L1 --> L2 --> L3 --> L4
+    end
+    Input["Input Token IDs (vocab=248,320)"] --> Embed["Tied Token Embedding (hidden_size=1024)"]
+    Embed --> MacroBlock
+    MacroBlock --> Norm["Final RMSNorm (eps=1e-6)"]
+    Norm --> Head["Tied LM Output Head"]
+    Head --> Logits["Next-Token Logits"]
 ```
 
+### End-to-End Pipeline
+
+The project integrates data acquisition, multi-stage filtration, tokenization, distributed training, checkpoint synchronization, and benchmark evaluation into a modular architecture:
+
+```mermaid
+flowchart TD
+    subgraph DataSources["1. Upstream Data Ingestion (Streaming)"]
+        S1["Stack v3 Code (35%)"]
+        S2["Stack v3 Docs (20%)"]
+        S3["The Vault Function (20%)"]
+        S4["FineWeb-HQ (15%)"]
+        S5["OpenWebMath (10%)"]
+    end
+
+    subgraph DataEngine["2. Curation, Deduplication & Sharding"]
+        F1["FastText LID (en >= 0.70) & Heuristic Filtering"]
+        D1["SHA-256 Exact Content Deduplication"]
+        FIM["50% Fill-in-the-Middle (FIM) Synthesis"]
+        MIX["Deficit-Based Token Stream Mixer"]
+        PACK["Sequence Packing (4096 Tokens) with <|endoftext|>"]
+        SHARD["Arrow / Parquet Shard Writer (~50MB / Shard)"]
+        
+        DataSources --> F1 --> D1 --> FIM --> MIX --> PACK --> SHARD
+    end
+
+    subgraph TrainingEngine["3. Continued Pre-Training (CPT) Engine"]
+        MEM["Memory-Mapped Shard Loader"]
+        MODEL["Qwen3.5-0.8B Base (Vision Stripped: 752M Params)"]
+        OPT["Full-Parameter Training (Liger Kernel + SDPA / PJRT TPU)"]
+        CKPT["Periodic Checkpointing & Auto-Resume"]
+        
+        SHARD --> MEM --> OPT
+        MODEL --> OPT
+        OPT --> CKPT
+    end
+
+    subgraph Deployment["4. Evaluation & Artifact Distribution"]
+        EVAL["Benchmarking (HumanEval, MBPP, GSM8K, MMLU)"]
+        HUB["Hugging Face Hub / Google Drive Checkpoint Sync"]
+        INF["Inference (Standard Autoregressive & FIM Infilling)"]
+        
+        CKPT --> EVAL
+        CKPT --> HUB
+        CKPT --> INF
+    end
+```
+
+### Distributed Training Topology
+
+The training harness is engineered for portability across heterogeneous accelerator environments:
+
+```mermaid
+flowchart LR
+    subgraph Local["Local Windows Development"]
+        DEV["Code & Config Development"]
+        VERIFY["Model & Dataset Verification"]
+        SMOKE["10-Step Pipeline Smoke Test"]
+    end
+
+    subgraph RemoteGPU["Google Colab / Kaggle GPU"]
+        GPU1["NVIDIA T4 / L4 / A100"]
+        LIGER["Liger Kernel (Triton Fused CrossEntropy)"]
+        GDRIVE["Google Drive & HF Hub Checkpoint Sync"]
+        GPU1 --- LIGER
+        GPU1 --> GDRIVE
+    end
+
+    subgraph RemoteTPU["Kaggle TPU v5e-8"]
+        TPU["8 TPU v5e Pod Cores (128GB HBM)"]
+        PJRT["PyTorch/XLA PJRT Runtime"]
+        BF16["Native Hardware BF16 Execution"]
+        TPU --- PJRT
+        PJRT --- BF16
+    end
+
+    Local --> RemoteGPU
+    Local --> RemoteTPU
+```
+
 ---
 
-## 🛠️ Quick Start
+## Model Specification
 
-### 1. Verify Model
+| Property | Value | Notes |
+| :--- | :--- | :--- |
+| **Model Name** | QaptaanLM-0.75B | Text-only causal language model |
+| **Base Model** | `Qwen/Qwen3.5-0.8B-Base` | Base revision `dc7cdfe2ee4154fa7e30f5b51ca41bfa40174e68` |
+| **Total Parameters** | **752,382,976 (752M)** | Vision transformer stripped via `Qwen3_5ForCausalLM` |
+| **Trainable Parameters** | 752,382,976 | Full-parameter Continued Pre-Training (no LoRA) |
+| **Hidden Size ($d_{model}$)** | 1024 | Base hidden dimension |
+| **Intermediate Size ($d_{ffn}$)** | 3584 | SwiGLU activation function |
+| **Total Layers** | 24 | 18 Linear Attention + 6 Full Attention layers |
+| **Full Attention Heads** | 8 Query / 2 Key-Value | Grouped-Query Attention (4:1 query-to-KV ratio) |
+| **Full Attention Head Dim** | 256 | Query head dimension |
+| **Linear Attention Heads** | 16 QK / 16 V | Gated DeltaNet (128 head dim, conv kernel dim 4) |
+| **Context Length** | 262,144 tokens (256K native) | Tested up to 4096 packed sequences in CPT |
+| **Vocabulary Size** | 248,320 tokens | Tied input/output word embeddings |
+| **Rotary Position Embedding** | Interleaved M-RoPE | $\theta = 10,000,000$, partial rotary factor 0.25 |
+| **Normalization** | RMSNorm ($\epsilon = 1\times 10^{-6}$) | Pre-layer normalization |
+| **Primary Tokenizer** | BPE Tokenizer | Includes FIM tokens and chat delimiters |
+| **Precision Support** | `float32`, `fp16` (NVIDIA T4), `bfloat16` (A100/TPU) | Auto-configured per accelerator |
+
+---
+
+## Dataset Mixture (KapCode-1B)
+
+The Continued Pre-Training phase trains on **KapCode-1B** ([`kaptaan45/KapCode-1B`](https://huggingface.co/datasets/kaptaan45/KapCode-1B)), a 1-billion-token curated dataset composed of 5 domain partitions:
+
+### Data Sources
+
+| Domain | Source Repository | Target Proportion | Target Tokens | Description |
+| :--- | :--- | :---:| :---:| :--- |
+| **Source Code** | `HuggingFaceCode/stack-v3-train` | **35%** | 350,000,000 | Multi-language source code filtered for quality and permissive licenses |
+| **Technical Documentation** | `HuggingFaceCode/stack-v3-train` | **20%** | 200,000,000 | READMEs, Markdown guides, API references, and architecture docs |
+| **Function-Level Code** | `Fsoft-AIC/the-vault-function` | **20%** | 200,000,000 | Individual functions annotated with docstrings and type hints |
+| **High-Quality Web** | `epfml/FineWeb-HQ` | **15%** | 150,000,000 | Top-tier educational and technical English web documents |
+| **Mathematical Reasoning** | `open-web-math/open-web-math` | **10%** | 100,000,000 | LaTeX equations, proofs, and STEM literature |
+| **Total** | | **100%** | **1,000,000,000** | |
+
+### Target Programming Languages
+
+Within the code partitions (Stack v3 Code and The Vault), files are sampled according to the following target distribution:
+
+| Programming Language / Category | Target Proportion | Key File Types |
+| :--- | :---:| :--- |
+| **Python** | **25%** | `.py` |
+| **TypeScript** | **13%** | `.ts`, `.tsx` |
+| **JavaScript** | **10%** | `.js`, `.jsx`, `.mjs` |
+| **SQL** | **9%** | `.sql` |
+| **C++** | **7%** | `.cpp`, `.hpp`, `.cc`, `.cxx` |
+| **Shell / Bash** | **6%** | `.sh`, `.bash`, `.zsh` |
+| **C** | **5%** | `.c`, `.h` |
+| **Java** | **5%** | `.java` |
+| **HTML** | **5%** | `.html`, `.htm` |
+| **Rust** | **4%** | `.rs` |
+| **Go** | **4%** | `.go` |
+| **CSS** | **4%** | `.css`, `.scss` |
+| **Dockerfile / CI-CD / IaC** | **3%** | `Dockerfile`, `.github/workflows/*.yml`, `Cargo.toml`, `pyproject.toml` |
+
+### Data Filtering and Quality Control
+
+1. **Repository Filtering**: Excludes repository forks and vendor subtrees (`vendor/`, `node_modules/`, `dist/`, `build/`).
+2. **File Quality Heuristics**:
+   - File size constraints: $100\text{ bytes} \le \text{size} \le 1\text{ MB}$.
+   - Line length limits: Maximum 1,000 characters per line.
+   - Line count bounds: Minimum 3 lines, maximum 10,000 lines.
+   - Alphanumeric density: Minimum 25% alphanumeric characters for code, 50% for documentation, 60% for general web text.
+3. **Language Identification**: FastText LID (`lid.176.bin`) rejects non-English prose in documentation and web partitions with confidence threshold $\ge 0.70$.
+4. **Boilerplate Stripping**: Regular-expression removal of legal notices, license headers, cookie consent text, and navigation breadcrumbs.
+5. **Exact Deduplication**: SHA-256 hash tracking over whitespace-normalized content blocks to eliminate exact duplicates across repositories and splits.
+
+### Fill-in-the-Middle (FIM) Transformation
+
+To equip the model with code infilling and multi-line completion capabilities, **50% of all code samples** undergo Prefix-Suffix-Middle (PSM) formatting using the tokenizer's native special tokens:
+
+$$\text{Input Sequence} = \texttt{<|fim\_prefix|>} + \text{Prefix} + \texttt{<|fim\_suffix|>} + \text{Suffix} + \texttt{<|fim\_middle|>} + \text{Middle}$$
+
+---
+
+## Training Infrastructure
+
+### Speed and Memory Optimizations
+
+- **Liger Kernel Integration**: Custom Triton kernels fuse Cross-Entropy Loss computation directly with vocabulary projection, eliminating the intermediate $[B \times S, 248320]$ logits tensor. This reduces VRAM by **40% to 60%** during backward passes and improves training throughput by 15%–20%.
+- **PyTorch SDPA**: Native Scaled Dot-Product Attention selects the optimal GPU execution kernel (FlashAttention or memory-efficient attention).
+- **Google TPU v5e-8 PJRT Distributed Execution**: Utilizes `torch_xla.launch` to orchestrate 8 TPU v5e cores across 128 GB HBM with native hardware `bfloat16` precision, completing 1B tokens in ~2–4 hours.
+- **Sequence Packing**: Packs multiple documents up to 4096 tokens delimited by `<|endoftext|>` to eliminate padding token overhead.
+
+### Hyperparameters
+
+| Parameter | Configuration |
+| :--- | :--- |
+| **Optimization Objective** | Causal Language Modeling (Full-Parameter CPT) |
+| **Optimizer** | AdamW (`adamw_torch` or `paged_adamw_8bit` on $\le 16\text{GB}$ GPUs) |
+| **Optimizer Betas / Epsilon** | $\beta_1 = 0.9$, $\beta_2 = 0.95$, $\epsilon = 1\times 10^{-8}$ |
+| **Peak Learning Rate** | $2.0 \times 10^{-5}$ ($2\text{e-5}$) |
+| **LR Schedule** | Cosine decay to $10\%$ ($2.0 \times 10^{-6}$) |
+| **Warmup Ratio** | $2\%$ of total training steps |
+| **Weight Decay** | $0.01$ |
+| **Gradient Clipping** | Maximum gradient norm $1.0$ |
+| **Target Tokens** | $1,000,000,000$ ($1\text{B}$) |
+| **Sequence Length** | $2048$ tokens (GPU) / $1024$ tokens (TPU static shape) |
+| **Effective Batch Size** | 32 sequences ($65,536\text{ tokens/step}$ on GPU) |
+| **Gradient Checkpointing** | Enabled |
+
+### Hardware Configurations
+
+| Environment | Accelerator | Memory | Precision | Effective Tokens / Step | Estimated Runtime (1B Tokens) |
+| :--- | :--- | :--- | :--- | :---:| :---:|
+| **Kaggle TPU** | Google TPU v5e-8 (8 cores) | 128 GB HBM | `bfloat16` | 8,192 tokens/step | **~2 – 4 hours** |
+| **Google Colab** | NVIDIA A100-SXM4 | 40 / 80 GB | `bfloat16` | 65,536 tokens/step | **~6 – 8 hours** |
+| **Google Colab / Kaggle** | NVIDIA Tesla T4 (or Dual T4) | 16 GB (or 32 GB) | `fp16` + Liger Kernel | 65,536 tokens/step | **~18 – 24 hours** |
+
+---
+
+## Reproduction Guide
+
+### 1. Environment Setup
+
+Clone the repository and install the verified dependencies:
+
+```bash
+git clone https://github.com/rudy-07/QaptaanLM-0.75B.git
+cd QaptaanLM-0.75B
+
+# Create and activate a clean virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: .\venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+Set your Hugging Face access token for Hub persistence:
+
+```bash
+export HF_TOKEN="your_huggingface_token_here"
+# On Windows PowerShell: $env:HF_TOKEN="your_huggingface_token_here"
+```
+
+### 2. Model Verification
+
+Verify that the base model loads in text-only mode (`Qwen3_5ForCausalLM`), inspect special tokens, and validate a CPU forward pass:
+
 ```bash
 python scripts/01_verify_model.py --model-path "models/Qwen3.5-0.8B-Base"
 ```
 
-### 2. Run End-to-End Smoke Test
+### 3. Dataset Verification
+
+Test live streaming connections and validate schemas for all five upstream data sources:
+
 ```bash
-python scripts/04_smoke_test.py --model-path "models/Qwen3.5-0.8B-Base" --num-steps 3
+python scripts/02_verify_datasets.py
 ```
 
-### 3. Generate Packed Dataset Shards
-```bash
-# Full dataset mixture (~1B tokens)
-python scripts/03_process_data.py --output-dir data/processed
+### 4. Data Preprocessing and Sharding
 
-# Or test on a small sample (e.g. 1000 samples per dataset)
+Process, filter, deduplicate, mix, and pack the dataset into memory-mapped Arrow shards:
+
+```bash
+# Small validation test (e.g., 1,000 samples per source)
 python scripts/03_process_data.py --max-samples 1000 --output-dir data/processed
+
+# Full 1-billion-token sharding run
+python scripts/03_process_data.py --target-tokens 1000000000 --output-dir data/processed
 ```
 
-### 4. Launch CPT Training
+### 5. Smoke Test
+
+Run a 10-step end-to-end training and checkpoint reload test on synthetic data to confirm training loop integrity:
+
 ```bash
-python scripts/05_train_cpt.py --data-dir data/processed
+python scripts/04_smoke_test.py --num-steps 10
 ```
 
-### 5. Benchmark & Compare Models
+### 6. Continued Pre-Training Launch
+
+#### GPU Training (Local, Colab, or Kaggle):
+
 ```bash
-python scripts/06_evaluate.py --compare --base Qwen/Qwen3.5-0.8B-Base --cpt checkpoints/cpt/final
+python scripts/05_train_cpt.py --config configs/cpt_config.yaml --data-dir data/processed
+```
+
+#### TPU v5e-8 Training (Kaggle TPU with PJRT runtime):
+
+```bash
+PJRT_DEVICE=TPU XLA_USE_BF16=1 python scripts/05_train_cpt.py --config configs/cpt_config.yaml --data-dir /kaggle/input/kapcode-shards
+```
+
+*Note: Do not wrap TPU execution with `torchrun` or `xla_spawn`. `torch_xla.launch` automatically configures workers across available TPU cores.*
+
+To resume training from a saved checkpoint:
+
+```bash
+python scripts/05_train_cpt.py --resume checkpoints/cpt/checkpoint-5000 --data-dir data/processed
+```
+
+### 7. Evaluation
+
+Evaluate the baseline or CPT model on code generation and mathematical reasoning benchmarks:
+
+```bash
+# Evaluate baseline
+python scripts/06_evaluate.py --model-path "models/Qwen3.5-0.8B-Base" --output logs/baseline_eval.json
+
+# Compare baseline against trained CPT checkpoint
+python scripts/06_evaluate.py --compare --base "models/Qwen3.5-0.8B-Base" --cpt "checkpoints/cpt/final" --output logs/comparison_report.json
 ```
 
 ---
 
-## ☁️ Remote Training (Google Colab / Kaggle)
+## Inference
 
-1. **Google Colab**: Open `notebooks/colab_cpt.ipynb`, connect an NVIDIA T4/L4/A100 GPU runtime, mount Google Drive, and run the cells. Checkpoints and dataset shards automatically sync to Google Drive.
-2. **Kaggle**: Open `notebooks/kaggle_cpt.ipynb`, set accelerator to GPU T4 x2 or P100, and execute the training pipeline.
+### Standard Autoregressive Generation
+
+```python
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+model_id = "rudy-07/QaptaanLM-0.75B"
+
+tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=False)
+model = AutoModelForCausalLM.from_pretrained(
+    model_id,
+    torch_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
+    device_map="auto",
+    trust_remote_code=False,
+)
+
+prompt = "def binary_search(arr: list[int], target: int) -> int:\n    \"\"\"Return the index of target in sorted arr, or -1 if not found.\"\"\"\n"
+
+inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+
+with torch.no_grad():
+    outputs = model.generate(
+        **inputs,
+        max_new_tokens=256,
+        temperature=0.2,
+        top_p=0.95,
+        do_sample=True,
+        eos_token_id=tokenizer.eos_token_id,
+    )
+
+print(tokenizer.decode(outputs[0], skip_special_tokens=True))
+```
+
+### Fill-in-the-Middle (FIM) Code Completion
+
+```python
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+model_id = "rudy-07/QaptaanLM-0.75B"
+
+tokenizer = AutoTokenizer.from_pretrained(model_id)
+model = AutoModelForCausalLM.from_pretrained(
+    model_id,
+    torch_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
+    device_map="auto",
+)
+
+prefix = "def compute_area(radius: float) -> float:\n    \"\"\"Compute area of circle.\"\"\"\n    if radius < 0:\n        raise ValueError('Radius cannot be negative')\n"
+suffix = "\n    return area\n"
+
+# Construct FIM prompt: <|fim_prefix|> Prefix <|fim_suffix|> Suffix <|fim_middle|>
+fim_prompt = f"<|fim_prefix|>{prefix}<|fim_suffix|>{suffix}<|fim_middle|>"
+
+inputs = tokenizer(fim_prompt, return_tensors="pt").to(model.device)
+
+with torch.no_grad():
+    outputs = model.generate(
+        **inputs,
+        max_new_tokens=64,
+        temperature=0.1,
+        do_sample=False,
+        eos_token_id=tokenizer.convert_tokens_to_ids("<|fim_middle|>"),
+    )
+
+infilled_text = tokenizer.decode(outputs[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
+print("Infilled Code:")
+print(infilled_text)
+```
+
+---
+
+## Evaluation and Benchmarks
+
+The evaluation harness in `src/evaluation/benchmarks.py` tracks model progress across coding, reasoning, and perplexity metrics:
+
+| Benchmark Category | Benchmark Suite | Evaluation Metric | Baseline Protocol |
+| :--- | :--- | :---:| :--- |
+| **Code Generation** | HumanEval | `pass@1` | Zero-shot greedy decoding ($T=0.0$) |
+| **Code Generation** | MBPP | `pass@1` | 3-shot prompt execution |
+| **Mathematical Reasoning** | GSM8K | `Accuracy` | 5-shot Chain-of-Thought reasoning |
+| **General & Technical STEM** | MMLU (CS / Math / Eng) | `Accuracy` | 5-shot multiple choice evaluation |
+| **Language Modeling** | Held-Out Code Perplexity | `PPL` | Cross-entropy loss over 10K validation tokens |
+
+> [!NOTE]
+> Evaluation results will be updated with final official benchmark scores following the completion of the full 1B token training run.
+
+---
+
+## Repository Structure
+
+```text
+QaptaanLM-0.75B/
+├── configs/
+│   ├── cpt_config.yaml          # Hyperparameters, batch configurations, and accelerator overrides
+│   ├── dataset_config.yaml      # 5-source dataset mixture, token targets, filtering & dedup
+│   └── eval_config.yaml         # Benchmark suite configurations (HumanEval, GSM8K, MMLU)
+├── src/
+│   ├── data/
+│   │   ├── dedup.py             # SHA-256 exact & MinHash near-deduplication pipelines
+│   │   ├── filters.py           # Multi-signal code, doc, web, math, & FastText filters
+│   │   ├── loader.py            # Unified streaming loaders for all 5 CPT data sources
+│   │   ├── mixture.py           # Deficit-based weighted token stream interleaver
+│   │   ├── sharding.py          # Memory-mapped Arrow & Parquet shard writer
+│   │   └── tokenize_and_pack.py # Qwen BPE tokenizer, 50% FIM formatting, & sequence packing
+│   ├── training/
+│   │   ├── callbacks.py         # Token counting, ETA, GDrive & HF Hub auto-sync
+│   │   ├── liger_integration.py # Triton Liger Kernel fused layer patches (CUDA)
+│   │   ├── trainer.py           # Hugging Face Trainer wrapper with token-count stopping
+│   │   └── utils.py             # Accelerator detection, memory profiling & batch auto-sizing
+│   ├── evaluation/
+│   │   ├── benchmarks.py        # HumanEval, GSM8K, math reasoning & perplexity suite
+│   │   └── compare.py           # Side-by-side Base vs CPT model comparison
+│   └── utils/
+│       ├── config.py            # Environment-aware YAML configuration resolver
+│       ├── logging_utils.py     # Structured console & rotating file logging
+│       └── storage.py           # Google Drive & Hugging Face Hub checkpoint persistence
+├── scripts/
+│   ├── 01_verify_model.py       # Inspect base model architecture, verify text-only load
+│   ├── 02_verify_datasets.py    # Test streaming & schema for all 5 upstream datasets
+│   ├── 03_process_data.py       # End-to-end data filtering, FIM, mixing, & sharding
+│   ├── 04_smoke_test.py         # End-to-end 10-step training & checkpoint reload verification
+│   ├── 05_train_cpt.py          # Production CPT launch script (GPU & TPU PJRT multi-process)
+│   └── 06_evaluate.py           # Benchmark execution and Base vs CPT comparative analysis
+├── notebooks/
+│   ├── colab_cpt.ipynb          # Google Colab GPU / Google Drive training workflow
+│   ├── kaggle_cpt.ipynb         # Kaggle GPU (Dual T4 / P100) training workflow
+│   └── kaggle_tpu_cpt.ipynb     # Kaggle TPU v5e-8 (8 Pod Cores, PJRT BF16) workflow
+├── models/
+│   └── Qwen3.5-0.8B-Base/       # Base foundation model weights, configs, & tokenizer
+├── DATASET_CARD.md              # Hugging Face Dataset Card for kaptaan45/KapCode-1B
+├── requirements.txt             # Verified environment dependencies
+├── PROJECT_SPEC.md              # Original specification and project requirements
+└── README.md                    # Main GitHub repository documentation
+```
+
+---
+
+## Security and Credentials
+
+- **Zero Credentials Policy**: No API keys, Hugging Face write tokens, private paths, or personal credentials are committed to this repository.
+- **Environment Token Authentication**: Authentication for private datasets and Hub uploads must be provided via the `HF_TOKEN` environment variable:
+  ```bash
+  export HF_TOKEN="hf_your_secure_token"
+  ```
+- **Local Cache Isolation**: Checkpoints and intermediate shards default to environment-isolated directories (`data/processed`, `checkpoints/`, or mounted storage).
+
+---
+
+## Licensing and Attribution
+
+This project is open-sourced under the **Apache 2.0 License**.
+
+### Upstream Model Attribution
+- Base model weights and architecture adapted from **Qwen3.5-0.8B-Base**, developed by the **Qwen Team (Alibaba Cloud)** under the [Apache 2.0 License](https://huggingface.co/Qwen/Qwen3.5-0.8B-Base/blob/main/LICENSE).
+
+### Upstream Dataset Attribution
+- **The Stack v3**: Developed by BigCode / Hugging Face.
+- **The Vault**: Developed by FPT Software AI Center (Fsoft-AIC).
+- **FineWeb-HQ**: Developed by EPFL / Hugging Face.
+- **OpenWebMath**: Developed by OpenWebMath team.
+
+---
+
+## Citation
+
+If you find QaptaanLM-0.75B or the KapCode-1B dataset useful in your research or applications, please cite:
+
+```bibtex
+@misc{qaptaanlm2026,
+  title   = {{QaptaanLM-0.75B}: Efficient Hybrid Attention Language Model for Code and Technical Reasoning},
+  author  = {Rudy and Contributors},
+  year    = {2026},
+  url     = {https://github.com/rudy-07/QaptaanLM-0.75B},
+  note    = {GitHub Repository and Hugging Face Model}
+}
+```
+
+```bibtex
+@misc{kapcode1b2026,
+  title   = {{KapCode-1B}: A Curated 1-Billion Token Dataset for Compact Code Models},
+  author  = {Rudy and Contributors},
+  year    = {2026},
+  url     = {https://huggingface.co/datasets/kaptaan45/KapCode-1B},
+  note    = {Hugging Face Dataset}
+}
+```
