@@ -1,0 +1,17 @@
+# JAX & TPU Ecosystem
+jax[tpu]>=0.4.30
+flax>=0.8.4
+optax>=0.2.2
+orbax-checkpoint>=0.5.15
+
+# Data & Hugging Face
+transformers>=5.13.0
+datasets>=2.19.0
+safetensors>=0.4.3
+pyarrow>=15.0.0
+numpy>=1.24.0
+
+# Monitoring & Config
+pyyaml>=6.0
+rich>=13.0.0
+tqdm>=4.65.0
