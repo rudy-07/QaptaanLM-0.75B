@@ -25,8 +25,13 @@ from jax_training.data.prefetch import PrefetchLoader
 
 logger = logging.getLogger(__name__)
 
-# TPU v5e BF16 peak TFLOPs per core
-TPU_V5E_PEAK_TFLOPS_PER_CORE = 197.0
+# TPU BF16 peak TFLOPs per core by device generation
+TPU_PEAK_TFLOPS_MAP = {
+    "v3": 123.0,
+    "v4": 275.0,
+    "v5e": 197.0,
+    "v5p": 459.0,
+}
 
 
 @dataclass
@@ -42,10 +47,10 @@ class TrainConfig:
     dataset_packed_seq_length: int = 4096
     target_tokens: int = 1_000_000_000
     
-    # Batch & Hardware
-    per_device_batch_size: int = 2
+    # Batch & Hardware (per_device_batch_size=4 and loss_chunk_size=512 for optimal TPU MXU saturation without OOM)
+    per_device_batch_size: int = 4
     gradient_accumulation_steps: int = 1
-    loss_chunk_size: int = 256
+    loss_chunk_size: int = 512
     
     # Optimizer & Schedule
     learning_rate: float = 2e-5
@@ -62,10 +67,10 @@ class TrainConfig:
     dtype: str = "bfloat16"
     seed: int = 42
     
-    # Steps & Checkpointing
+    # Steps & Checkpointing (save every 2500 steps, max 2 checkpoints)
     max_steps: int = -1
     logging_steps: int = 50
-    save_steps: int = 250
+    save_steps: int = 2500
     save_total_limit: int = 2
     resume_from_checkpoint: Optional[str] = None
     smoke_test: bool = False
@@ -286,7 +291,15 @@ class JAXTrainer:
         # Benchmark compilation explicitly on Step 1
         data_iter = iter(loader)
         flops_per_token = self._calculate_flops_per_token()
-        total_peak_tflops = TPU_V5E_PEAK_TFLOPS_PER_CORE * max(1, self.num_devices)
+        
+        # Detect TPU device peak TFLOPs
+        dev_kind = str(self.devices[0].device_kind).lower() if self.devices else "v5e"
+        peak_per_core = TPU_PEAK_TFLOPS_MAP.get("v5e", 197.0)
+        for k, v in TPU_PEAK_TFLOPS_MAP.items():
+            if k in dev_kind:
+                peak_per_core = v
+                break
+        total_peak_tflops = peak_per_core * max(1, self.num_devices)
 
         step_times = []
         last_log_time = time.time()
@@ -353,8 +366,9 @@ class JAXTrainer:
                     )
                 last_log_time = now
 
-            # Checkpointing
-            if step % self.config.save_steps == 0 or step == self.total_steps or (self.config.smoke_test and step >= start_step + 5):
+            # Checkpointing (asynchronous non-blocking during training, blocking only at final step)
+            is_final_step = (step == self.total_steps) or (self.config.smoke_test and step >= start_step + 5)
+            if step % self.config.save_steps == 0 or is_final_step:
                 self.checkpoint_manager.save(
                     step=step,
                     state=state,
@@ -363,6 +377,7 @@ class JAXTrainer:
                         "tokens_trained": tokens_trained,
                         "step": step,
                     },
+                    blocking=is_final_step,
                 )
 
             # Smoke test early exit

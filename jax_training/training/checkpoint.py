@@ -52,21 +52,31 @@ class CheckpointManager:
         step: int,
         state: Any,
         metadata: Optional[Dict[str, Any]] = None,
+        blocking: bool = False,
     ) -> Optional[Path]:
-        """Save a training checkpoint with step and metadata."""
+        """Save a training checkpoint with step and metadata asynchronously.
+        
+        Args:
+            step: Training step number.
+            state: TrainState PyTree.
+            metadata: Optional dictionary of metrics and metadata.
+            blocking: If True, waits for background disk write to complete before returning.
+        """
         if not self.is_primary:
             return None
+
+        # Ensure any previous async save has finished writing before kicking off a new one
+        self.wait_until_finished()
 
         step_dir = self.output_dir / f"checkpoint-{step}"
         step_dir.mkdir(parents=True, exist_ok=True)
 
         try:
             if self._checkpointer is not None:
-                # Orbax save
-                import orbax.checkpoint as ocp
+                # Orbax saves asynchronously in background thread
                 target_state = jax.device_get(state)
                 self._checkpointer.save(step_dir / "state", target_state)
-                if hasattr(self._checkpointer, "wait_until_finished"):
+                if blocking and hasattr(self._checkpointer, "wait_until_finished"):
                     self._checkpointer.wait_until_finished()
             else:
                 from flax.training import checkpoints
@@ -86,7 +96,11 @@ class CheckpointManager:
             with open(step_dir / "metadata.json", "w", encoding="utf-8") as f:
                 json.dump(meta, f, indent=2)
 
-            logger.info(f"✓ Saved checkpoint to {step_dir}")
+            if blocking:
+                logger.info(f"✓ Saved checkpoint to {step_dir}")
+            else:
+                logger.info(f"✓ Checkpoint {step} dispatching async write to {step_dir} (training continues)")
+
             self._prune_old_checkpoints()
             return step_dir
 
@@ -152,13 +166,16 @@ class CheckpointManager:
         return candidates[0][1]
 
     def _prune_old_checkpoints(self):
-        """Prune older checkpoints exceeding max_to_keep."""
+        """Prune older checkpoints exceeding max_to_keep to strictly protect disk space."""
         if not self.is_primary:
             return
 
         candidates = []
         for p in self.output_dir.glob("checkpoint-*"):
             if p.is_dir():
+                # Avoid touching active background saving temp directory
+                if p.name.endswith(".orbax-checkpoint-tmp"):
+                    continue
                 try:
                     step_num = int(p.name.split("-")[-1])
                     candidates.append((step_num, p))

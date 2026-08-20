@@ -30,14 +30,14 @@ training:
   max_seq_length: 1024
   dataset_packed_seq_length: 4096
   
-  # Batch size per TPU device (8 devices on TPU v5e-8)
-  # With per_device_batch_size=2: global batch = 2 * 8 = 16 sequences = 16,384 tokens/step
-  per_device_train_batch_size: 2
+  # Batch size per TPU device (8 devices on TPU v5e-8 / v3-8)
+  # With per_device_batch_size=4: global batch = 4 * 8 = 32 sequences = 32,768 tokens/step
+  per_device_train_batch_size: 4
   gradient_accumulation_steps: 1
   
   # Chunked linear cross-entropy chunk size (tokens per projection step)
-  # Eliminates [B, S, 248k] temporary memory spikes
-  loss_chunk_size: 256
+  # 512 provides high compute efficiency and halves scan iterations with zero OOM risk
+  loss_chunk_size: 512
   
   # Learning rate and cosine scheduler
   learning_rate: 2.0e-5
@@ -56,9 +56,9 @@ training:
   dtype: "bfloat16"
   seed: 42
   
-  # Logging & Checkpointing
+  # Logging & Checkpointing (save every 2500 steps, max 2 checkpoints)
   logging_steps: 50
-  save_steps: 250
+  save_steps: 2500
   save_total_limit: 2
   resume_from_checkpoint: null  # null = auto-discover newest in output_dir
 
