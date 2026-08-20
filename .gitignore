@@ -20,9 +20,10 @@ env/
 *.swo
 
 # Project data (large files)
-models/
-data/processed/
-data/raw/
+/models/
+!jax_training/models/
+/data/processed/
+/data/raw/
 checkpoints/
 logs/*.log
 logs/TPU_CPT_TROUBLESHOOTING.md
