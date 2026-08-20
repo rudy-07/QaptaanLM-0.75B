@@ -1,5 +1,6 @@
 """Native JAX/Flax Distributed Trainer for Qwen3.5 CPT on TPU v5e-8."""
 
+import functools
 import logging
 import math
 import os
@@ -249,7 +250,10 @@ class JAXTrainer:
             if self.is_primary:
                 logger.info(f"Resumed at step {start_step:,} ({tokens_trained:,} tokens)")
 
-        # Compile Step Function with JIT and Sharding
+        # Setup SPMD Sharding specs and buffer placement
+        state_sharding = jax.tree_util.tree_map(lambda _: self.replicated_sharding, state)
+        data_sharding = self.data_sharding
+        state = jax.device_put(state, state_sharding)
         loss_chunk_size = self.config.loss_chunk_size
 
         def loss_fn(params, batch):
@@ -263,7 +267,12 @@ class JAXTrainer:
             )
             return loss, (loss, valid_tokens)
 
-        @jax.jit
+        @functools.partial(
+            jax.jit,
+            in_shardings=(state_sharding, data_sharding),
+            out_shardings=(state_sharding, self.replicated_sharding),
+            donate_argnums=(0,),
+        )
         def train_step(train_state_obj, batch):
             grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
             (_, (raw_loss, valid_tokens)), grads = grad_fn(train_state_obj.params, batch)

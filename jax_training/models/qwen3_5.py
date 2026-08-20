@@ -307,6 +307,7 @@ class Qwen3_5GatedDeltaNet(nn.Module):
 
         init_state = jnp.zeros((batch_size, self.num_v_heads, self.head_k_dim, self.head_v_dim), dtype=jnp.float32)
 
+        @jax.checkpoint
         def _step_fn(state, step_inputs):
             q_i, k_i, v_i, b_i, g_i = step_inputs
             decay = jnp.exp(g_i)[:, :, None, None]  # [B, H, 1, 1]
