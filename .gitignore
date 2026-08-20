@@ -25,6 +25,7 @@ data/processed/
 data/raw/
 checkpoints/
 logs/*.log
+logs/TPU_CPT_TROUBLESHOOTING.md
 
 # Notebooks checkpoints
 .ipynb_checkpoints/

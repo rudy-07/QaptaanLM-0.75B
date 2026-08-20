@@ -111,12 +111,24 @@ class CPTTrainer:
             self._n_devices = max(self.hardware.get("gpu_count", 1), 1)
 
         if is_tpu:
-            # TPU v5e-8 has 8 cores x 16GB HBM = 128GB total memory.
-            # The default TPU batch is deliberately conservative: the chunked
-            # loss below keeps the large 248k-vocabulary projection bounded so
-            # two 1024-token samples per core can be used without the previous
-            # 2048-token OOM failure mode.
-            train_cfg["per_device_train_batch_size"] = train_cfg.get("tpu_per_device_train_batch_size", 2)
+            # TPU v5e-8 has 8 cores x ~15.75 GiB usable HBM.  The XLA compiler
+            # can retain multiple vocabulary-projection temporaries even when
+            # the loss is chunked, so batch=2 exceeds HBM for this 248k-vocab
+            # model.  Batch=1 is the stable full-parameter setting.
+            requested_tpu_batch = int(train_cfg.get("tpu_per_device_train_batch_size", 1))
+            # Keep this safety cap in code as well as in YAML.  A Kaggle
+            # notebook can continue running an older checked-out config even
+            # after the repository YAML has been corrected; batch=2 is known
+            # to produce a permanent XLA HBM compile error for this model.
+            safe_tpu_batch = min(requested_tpu_batch, 1)
+            if requested_tpu_batch != safe_tpu_batch:
+                logger.warning(
+                    "TPU HBM safety override: requested micro_batch=%s, "
+                    "forcing micro_batch=1. Sync the Kaggle copy of "
+                    "configs/cpt_config.yaml.",
+                    requested_tpu_batch,
+                )
+            train_cfg["per_device_train_batch_size"] = safe_tpu_batch
             train_cfg["gradient_accumulation_steps"] = train_cfg.get("tpu_gradient_accumulation_steps", 1)
             requested_seq_length = train_cfg.get("max_seq_length", 2048)
             # Liger's fused cross-entropy is CUDA/Triton-only. On TPU the

@@ -124,18 +124,20 @@ environment:
     
   # Kaggle-specific
   kaggle:
-    per_device_train_batch_size: 2
-    gradient_accumulation_steps: 8
+    per_device_train_batch_size: 1
+    gradient_accumulation_steps: 1
     max_seq_length: 2048
     dataloader_num_workers: 0
     # T4x2: 2x16GB — with Liger: micro_batch=2, grad_accum=8, seq=2048
     # → 65,536 tokens/step → ~15,258 steps for 1B tokens
     #
     # TPU v5e-8 / PJRT: scripts/05_train_cpt.py invokes torch_xla.launch.
-    # micro_batch=2, grad_accum=1 across 8 TPU cores = 16,384 tokens/step.
-    # The TPU loss is chunked over the 248k vocabulary to keep this within
-    # each v5e core's 16GB HBM.
-    tpu_per_device_train_batch_size: 2
+    # A v5e core has only ~15.75 GiB usable HBM.  XLA may retain several
+    # vocabulary-projection temporaries even with the chunked loss, so batch=2
+    # exceeds HBM during the first compile.  Use one sequence per replica;
+    # this is the stable setting for full-parameter CPT of this model.
+    # With grad_accum=1 across 8 TPU cores = 8,192 tokens/step.
+    tpu_per_device_train_batch_size: 1
     tpu_gradient_accumulation_steps: 1
     tpu_max_seq_length: 1024
     tpu_chunked_loss: true
