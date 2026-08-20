@@ -272,7 +272,7 @@ To equip the model with code infilling and multi-line completion capabilities, *
 
 | Environment | Accelerator | Memory | Precision | Effective Tokens / Step | Estimated Runtime (1B Tokens) |
 | :--- | :--- | :--- | :--- | :---:| :---:|
-| **Kaggle TPU** | Google TPU v5e-8 (8 cores) | 128 GB HBM | `bfloat16` | 8,192 tokens/step | **~2 – 4 hours** |
+| **Kaggle TPU** | Google TPU v5e-8 (8 cores) | 128 GB HBM | `bfloat16` | 16,384 tokens/step | **Target: within the 9-hour session limit** |
 | **Google Colab** | NVIDIA A100-SXM4 | 40 / 80 GB | `bfloat16` | 65,536 tokens/step | **~6 – 8 hours** |
 | **Google Colab / Kaggle** | NVIDIA Tesla T4 (or Dual T4) | 16 GB (or 32 GB) | `fp16` + Liger Kernel | 65,536 tokens/step | **~18 – 24 hours** |
 

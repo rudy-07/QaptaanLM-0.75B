@@ -166,3 +166,25 @@ class DetailedLoggingCallback(TrainerCallback):
                     logger.info(f"  {key}: {value:.4f}")
                 else:
                     logger.info(f"  {key}: {value}")
+
+
+class XLAStepFlushCallback(TrainerCallback):
+    """Close each lazy XLA training graph after the optimizer update.
+
+    Hugging Face Trainer delegates XLA optimizer handling to Accelerate.  The
+    exact flush behaviour has varied across Accelerate/PyTorch-XLA releases;
+    explicitly marking the step here prevents graphs and pending device work
+    from accumulating across many optimizer updates, which otherwise tends to
+    end as a worker SIGTERM/BrokenProcessPool with no useful Python traceback.
+    """
+
+    def on_step_end(self, args, state, control, **kwargs):
+        try:
+            import torch_xla.core.xla_model as xm
+
+            xm.mark_step()
+        except ImportError:
+            # This callback is only installed on TPU, but keeping it harmless
+            # makes it safe to construct in local smoke tests.
+            pass
+        return control

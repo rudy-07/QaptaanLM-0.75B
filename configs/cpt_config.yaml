@@ -30,6 +30,9 @@ training:
   # avoids materializing the full [seq, 248k] logits tensor).
   # Without Liger, auto_configure_batch_size() will reduce to 1024 at runtime.
   max_seq_length: 2048
+  # Processed shards contain fixed 4096-token packed records. TPU training
+  # exposes these as lazy non-overlapping windows at shorter sequence lengths.
+  dataset_packed_seq_length: 4096
   
   # Batch sizes — auto-configured at runtime based on GPU memory and Liger availability.
   # With Liger on T4: micro_batch=2, grad_accum=8 → 32 sequences/step → 65,536 tokens/step
@@ -129,13 +132,17 @@ environment:
     # → 65,536 tokens/step → ~15,258 steps for 1B tokens
     #
     # TPU v5e-8 / PJRT: scripts/05_train_cpt.py invokes torch_xla.launch.
-    # micro_batch=1, grad_accum=1 across 8 TPU cores = 8,192 tokens/step.
-    # Combined with eager attention and zero-copy collation, this compiles cleanly
-    # in ~4GB HBM with zero XLA padding expansion or OOM.
-    tpu_per_device_train_batch_size: 1
+    # micro_batch=2, grad_accum=1 across 8 TPU cores = 16,384 tokens/step.
+    # The TPU loss is chunked over the 248k vocabulary to keep this within
+    # each v5e core's 16GB HBM.
+    tpu_per_device_train_batch_size: 2
     tpu_gradient_accumulation_steps: 1
     tpu_max_seq_length: 1024
-    logging_steps: 50
+    tpu_chunked_loss: true
+    tpu_loss_chunk_size: 512
+    logging_steps: 250
+    save_steps: 250
+    save_total_limit: 2
 
   # Local (for testing only)
   local:

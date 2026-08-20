@@ -179,7 +179,7 @@ def _tpu_worker(index, config, env):
     global_ordinal = xr.global_ordinal()
     is_primary = global_ordinal == 0
 
-    # Avoid eight workers concurrently truncating the same log file. Trainer
+    # Avoid eight workers concurrently writing the same log file. Trainer
     # itself emits distributed-aware progress logs from the world process zero.
     setup_logging(
         log_dir=str(project_root / "logs") if is_primary else None,
@@ -192,11 +192,27 @@ def _tpu_worker(index, config, env):
         f"world_size={world_size}, device={torch_xla.device()})"
     )
 
-    train_dataset = _load_dataset(config, env)
-    if train_dataset is None:
-        raise RuntimeError(f"[TPU worker {global_ordinal}] Dataset could not be loaded.")
+    try:
+        train_dataset = _load_dataset(config, env)
+        if train_dataset is None:
+            raise RuntimeError(f"[TPU worker {global_ordinal}] Dataset could not be loaded.")
 
-    _train_worker(config, train_dataset)
+        _train_worker(config, train_dataset)
+    except BaseException:
+        # torch_xla.launch reports a child failure as BrokenProcessPool after
+        # terminating the other workers. Preserve the real rank traceback in a
+        # separate file so the next Kaggle run has actionable diagnostics.
+        failure_path = project_root / "logs" / f"cpt_training_rank{global_ordinal}_failure.log"
+        try:
+            failure_path.parent.mkdir(parents=True, exist_ok=True)
+            import traceback
+
+            with failure_path.open("a", encoding="utf-8") as failure_file:
+                failure_file.write(f"\n--- TPU worker {global_ordinal} failure ---\n")
+                failure_file.write(traceback.format_exc())
+        finally:
+            logger.exception("TPU worker %s failed", global_ordinal)
+        raise
 
 
 def main():
@@ -212,6 +228,19 @@ def main():
 
     if args.resume:
         config["training"]["resume_from_checkpoint"] = args.resume
+    elif not config["training"].get("resume_from_checkpoint"):
+        # Kaggle sessions are capped at nine hours.  Automatically continue
+        # from the newest complete checkpoint after a session interruption;
+        # an explicit --resume still takes precedence.
+        try:
+            from transformers.trainer_utils import get_last_checkpoint
+
+            last_checkpoint = get_last_checkpoint(config["training"]["output_dir"])
+        except (ImportError, OSError, TypeError):
+            last_checkpoint = None
+        if last_checkpoint:
+            config["training"]["resume_from_checkpoint"] = last_checkpoint
+            logger.info("Automatically resuming from latest checkpoint: %s", last_checkpoint)
 
     # Stash CLI data-dir into config so workers can access it
     if args.data_dir:

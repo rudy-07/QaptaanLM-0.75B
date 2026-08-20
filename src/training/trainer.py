@@ -13,6 +13,7 @@ Main training loop built on HuggingFace Trainer with:
 """
 
 import logging
+import math
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -34,12 +35,15 @@ from src.training.callbacks import (
     TokenCountCallback,
     CheckpointUploadCallback,
     DetailedLoggingCallback,
+    XLAStepFlushCallback,
 )
+from src.data.windowed import PackedWindowDataset
 from src.training.liger_integration import (
     apply_liger_kernel_patches,
     is_liger_available,
     estimate_vram_savings,
 )
+from src.training.tpu import enable_chunked_causal_lm_loss
 from src.utils.config import load_config, detect_environment
 
 logger = logging.getLogger(__name__)
@@ -108,10 +112,11 @@ class CPTTrainer:
 
         if is_tpu:
             # TPU v5e-8 has 8 cores x 16GB HBM = 128GB total memory.
-            # micro_batch=1, grad_accum=1 per core = 8 sequences (8,192 tokens/step).
-            # With eager attention and zero-copy collation, this uses only ~4GB HBM
-            # per core, compiling in seconds with zero padding expansion or OOM.
-            train_cfg["per_device_train_batch_size"] = train_cfg.get("tpu_per_device_train_batch_size", 1)
+            # The default TPU batch is deliberately conservative: the chunked
+            # loss below keeps the large 248k-vocabulary projection bounded so
+            # two 1024-token samples per core can be used without the previous
+            # 2048-token OOM failure mode.
+            train_cfg["per_device_train_batch_size"] = train_cfg.get("tpu_per_device_train_batch_size", 2)
             train_cfg["gradient_accumulation_steps"] = train_cfg.get("tpu_gradient_accumulation_steps", 1)
             requested_seq_length = train_cfg.get("max_seq_length", 2048)
             # Liger's fused cross-entropy is CUDA/Triton-only. On TPU the
@@ -196,6 +201,19 @@ class CPTTrainer:
             trust_remote_code=model_cfg.get("trust_remote_code", True),
             use_sdpa=use_sdpa,
         )
+
+        if is_tpu and train_cfg.get("tpu_chunked_loss", True):
+            chunk_size = int(train_cfg.get("tpu_loss_chunk_size", 512))
+            if enable_chunked_causal_lm_loss(self.model, chunk_size=chunk_size):
+                logger.info(
+                    "TPU loss optimization enabled: chunked tied-vocabulary "
+                    f"projection (chunk_size={chunk_size})"
+                )
+            else:
+                logger.warning(
+                    "Could not enable TPU chunked loss for this model; "
+                    "the standard full-vocabulary logits path will be used."
+                )
         # KV caching is for autoregressive inference.  It wastes memory during
         # full-sequence training and can create a second XLA graph.
         self._original_use_cache = getattr(self.model.config, "use_cache", True)
@@ -219,7 +237,7 @@ class CPTTrainer:
             n_devices = getattr(self, "_n_devices", max(self.hardware.get("gpu_count", 1), 1))
             tokens_per_step = seq_len * batch_size * grad_accum * n_devices
             target_tokens = train_cfg.get("target_tokens", 1_000_000_000)
-            max_steps = target_tokens // tokens_per_step
+            max_steps = math.ceil(target_tokens / tokens_per_step)
             logger.info(
                 f"Computed max_steps={max_steps:,} from "
                 f"target_tokens={target_tokens:,}, "
@@ -334,6 +352,9 @@ class CPTTrainer:
             DetailedLoggingCallback(),
         ]
 
+        if bool(self.hardware.get("tpu_available", False)):
+            callbacks.append(XLAStepFlushCallback())
+
         # Checkpoint upload
         hf_cfg = storage_cfg.get("hf_hub", {})
         gdrive_cfg = storage_cfg.get("gdrive", {})
@@ -374,6 +395,23 @@ class CPTTrainer:
         train_cfg = self.config["training"]
         seq_len = train_cfg["max_seq_length"]
 
+        # The corpus is packed at 4096 tokens.  When TPU memory requires a
+        # shorter static sequence, expose all non-overlapping windows instead
+        # of silently throwing away tokens after ``seq_len`` in the collator.
+        packed_length = train_cfg.get("dataset_packed_seq_length", 4096)
+        if not isinstance(train_dataset, PackedWindowDataset):
+            train_dataset = PackedWindowDataset(
+                train_dataset,
+                window_length=seq_len,
+                packed_length=packed_length,
+            )
+            logger.info(
+                "Expanded packed dataset into lazy non-overlapping windows: "
+                f"{len(train_dataset.source_dataset):,} records x "
+                f"{train_dataset.windows_per_record} windows = {len(train_dataset):,} sequences "
+                f"of {seq_len} tokens"
+            )
+
         training_args = self._build_training_args(eval_dataset=eval_dataset)
         callbacks = self._build_callbacks()
 
@@ -383,29 +421,38 @@ class CPTTrainer:
         if pad_token_id is None:
             pad_token_id = self.tokenizer.eos_token_id if self.tokenizer.eos_token_id is not None else 0
 
+        is_tpu = bool(self.hardware.get("tpu_available", False))
+        input_dtype = torch.int32 if is_tpu else torch.long
+
         def data_collator(features):
             bsz = len(features)
             # Allocate fixed static 2D tensors directly to minimize Python memory allocations
-            batch_input_ids = torch.full((bsz, seq_len), pad_token_id, dtype=torch.long)
-            batch_attention_mask = torch.zeros((bsz, seq_len), dtype=torch.long)
+            batch_input_ids = torch.full((bsz, seq_len), pad_token_id, dtype=input_dtype)
+            batch_attention_mask = torch.zeros((bsz, seq_len), dtype=torch.int32)
             batch_labels = torch.full((bsz, seq_len), -100, dtype=torch.long)
+
+            all_full = True
 
             for i, f in enumerate(features):
                 raw_ids = f["input_ids"]
                 if isinstance(raw_ids, torch.Tensor):
-                    cur_ids = raw_ids[:seq_len].to(dtype=torch.long)
+                    cur_ids = raw_ids[:seq_len].to(dtype=input_dtype)
                 else:
-                    cur_ids = torch.as_tensor(raw_ids[:seq_len], dtype=torch.long)
+                    cur_ids = torch.as_tensor(raw_ids[:seq_len], dtype=input_dtype)
                 n = cur_ids.numel()
                 batch_input_ids[i, :n] = cur_ids
+                if n != seq_len:
+                    all_full = False
 
                 if "attention_mask" in f:
                     raw_mask = f["attention_mask"]
                     if isinstance(raw_mask, torch.Tensor):
-                        cur_mask = raw_mask[:seq_len].to(dtype=torch.long)
+                        cur_mask = raw_mask[:seq_len].to(dtype=torch.int32)
                     else:
-                        cur_mask = torch.as_tensor(raw_mask[:seq_len], dtype=torch.long)
+                        cur_mask = torch.as_tensor(raw_mask[:seq_len], dtype=torch.int32)
                     batch_attention_mask[i, :cur_mask.numel()] = cur_mask
+                    if cur_mask.numel() != seq_len or not bool(torch.all(cur_mask == 1)):
+                        all_full = False
                 else:
                     batch_attention_mask[i, :n] = 1
 
@@ -423,11 +470,19 @@ class CPTTrainer:
                 valid_mask = (batch_attention_mask[i] == 1)
                 batch_labels[i, ~valid_mask] = -100
 
-            return {
+            batch = {
                 "input_ids": batch_input_ids,
-                "attention_mask": batch_attention_mask,
                 "labels": batch_labels,
             }
+
+            # Packed windows are full-length and causal by construction.  Do
+            # not send a redundant all-ones mask through Qwen's hybrid
+            # attention implementation; on XLA it can create extra mask
+            # materialisation and larger HLO graphs.  Keep the mask for a
+            # partial/padded window so the collator remains general.
+            if not all_full:
+                batch["attention_mask"] = batch_attention_mask
+            return batch
 
         self.trainer = Trainer(
             model=self.model,
