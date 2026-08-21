@@ -31,13 +31,13 @@ training:
   dataset_packed_seq_length: 4096
   
   # Batch size per TPU device (8 devices on TPU v5e-8 / v3-8)
-  # With per_device_batch_size=4: global batch = 4 * 8 = 32 sequences = 32,768 tokens/step
-  per_device_train_batch_size: 4
+  # With per_device_batch_size=2: global batch = 2 * 8 = 16 sequences = 16,384 tokens/step
+  per_device_train_batch_size: 2
   gradient_accumulation_steps: 1
   
   # Chunked linear cross-entropy chunk size (tokens per projection step)
-  # 512 provides high compute efficiency and halves scan iterations with zero OOM risk
-  loss_chunk_size: 512
+  # 256 guarantees safe HBM allocation (<15.75 GB) during JIT backward pass with zero OOM risk
+  loss_chunk_size: 256
   
   # Learning rate and cosine scheduler
   learning_rate: 2.0e-5

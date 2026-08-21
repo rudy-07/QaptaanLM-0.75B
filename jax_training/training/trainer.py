@@ -47,10 +47,10 @@ class TrainConfig:
     dataset_packed_seq_length: int = 4096
     target_tokens: int = 1_000_000_000
     
-    # Batch & Hardware (per_device_batch_size=4 and loss_chunk_size=512 for optimal TPU MXU saturation without OOM)
-    per_device_batch_size: int = 4
+    # Batch & Hardware (per_device_batch_size=2 and loss_chunk_size=256 guaranteed safe on 16GB HBM)
+    per_device_batch_size: int = 2
     gradient_accumulation_steps: int = 1
-    loss_chunk_size: int = 512
+    loss_chunk_size: int = 256
     
     # Optimizer & Schedule
     learning_rate: float = 2e-5
