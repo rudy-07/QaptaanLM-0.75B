@@ -159,7 +159,19 @@ def main():
 
         # Initialize trainer and train
         trainer = JAXTrainer(config=train_config, model_config=model_config)
-        trainer.train(dataset)
+        final_state = trainer.train(dataset)
+
+        # Export to Hugging Face safetensors format if requested and training completed
+        should_export = args.export_hf or storage_raw.get("export_hf", True)
+        if should_export and jax.process_index() == 0 and final_state is not None:
+            hf_export_dir = storage_raw.get("hf_export_dir", "checkpoints/jax_cpt_hf")
+            logger.info(f"Exporting final model to Hugging Face format at {hf_export_dir}...")
+            trainer.checkpoint_manager.export_to_hf_safetensors(
+                flax_params=final_state.params,
+                config=model_config,
+                export_dir=hf_export_dir,
+                tokenizer_name_or_path=train_config.model_name_or_path,
+            )
 
     except Exception as e:
         process_idx = jax.process_index()

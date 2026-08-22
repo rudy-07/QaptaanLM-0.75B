@@ -393,3 +393,4 @@ class JAXTrainer:
             logger.info("=" * 60)
             logger.info(f"✓ Training finished! Total time: {total_time / 3600.0:.2f} hours")
             logger.info("=" * 60)
+        return state
