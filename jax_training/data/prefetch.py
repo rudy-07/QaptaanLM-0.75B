@@ -58,17 +58,10 @@ class PrefetchLoader:
 
                 batch_input_ids = np.stack(input_ids_list, axis=0).astype(np.int32)
                 batch_labels = np.stack(labels_list, axis=0).astype(np.int32)
-
-                # Shard directly to device if sharding is provided
-                if self.sharding is not None:
-                    device_input_ids = jax.device_put(batch_input_ids, self.sharding)
-                    device_labels = jax.device_put(batch_labels, self.sharding)
-                    batch = {"input_ids": device_input_ids, "labels": device_labels}
-                else:
-                    batch = {
-                        "input_ids": jnp.array(batch_input_ids),
-                        "labels": jnp.array(batch_labels),
-                    }
+                batch = {
+                    "input_ids": batch_input_ids,
+                    "labels": batch_labels,
+                }
 
                 while not self._stop_event.is_set():
                     try:
@@ -95,11 +88,11 @@ class PrefetchLoader:
             except queue.Empty:
                 break
 
-    def __iter__(self) -> Iterator[Dict[str, jax.Array]]:
+    def __iter__(self) -> Iterator[Dict[str, np.ndarray]]:
         self.start()
         while True:
             try:
-                batch = self._queue.get(timeout=30.0)
+                batch = self._queue.get(timeout=60.0)
                 yield batch
             except queue.Empty:
                 if self._stop_event.is_set():

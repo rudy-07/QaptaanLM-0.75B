@@ -20,19 +20,17 @@ class ArrowShardDataset:
 
     def _load_dataset(self):
         try:
-            import pyarrow.dataset as ds
-            # Determine format
-            first = self.file_paths[0].lower()
-            fmt = "parquet" if first.endswith(".parquet") else "arrow"
-            self._dataset = ds.dataset(self.file_paths, format=fmt)
-            self._total_rows = self._dataset.count_rows()
-        except Exception:
-            # Fallback to Hugging Face datasets memory-mapped loading
             from datasets import load_dataset
             first = self.file_paths[0].lower()
             fmt = "parquet" if first.endswith(".parquet") else "arrow"
             self._hf_dataset = load_dataset(fmt, data_files=self.file_paths, split="train", keep_in_memory=False)
             self._total_rows = len(self._hf_dataset)
+        except Exception as e:
+            import pyarrow.dataset as ds
+            first = self.file_paths[0].lower()
+            fmt = "parquet" if first.endswith(".parquet") else "arrow"
+            self._dataset = ds.dataset(self.file_paths, format=fmt)
+            self._total_rows = self._dataset.count_rows()
 
     def __len__(self) -> int:
         return self._total_rows
@@ -43,20 +41,21 @@ class ArrowShardDataset:
         if index < 0 or index >= self._total_rows:
             raise IndexError(f"Index {index} out of range for dataset of size {self._total_rows}")
 
-        if hasattr(self, "_hf_dataset"):
+        if hasattr(self, "_hf_dataset") and self._hf_dataset is not None:
             item = self._hf_dataset[index]
             return {
                 "input_ids": np.array(item["input_ids"], dtype=np.int32),
                 "labels": np.array(item.get("labels", item["input_ids"]), dtype=np.int32),
             }
 
-        # PyArrow slice
-        scanner = self._dataset.scanner(columns=["input_ids", "labels"])
-        table = self._dataset.to_table(filter=None, columns=["input_ids", "labels"])
-        row = table.slice(index, 1)
-        input_ids = np.array(row["input_ids"][0].as_py(), dtype=np.int32)
-        if "labels" in row.column_names:
-            labels = np.array(row["labels"][0].as_py(), dtype=np.int32)
+        # PyArrow take single record (zero-copy, no table materialization)
+        cols = ["input_ids"]
+        if "labels" in self._dataset.schema.names:
+            cols.append("labels")
+        batch = self._dataset.take([index], columns=cols)
+        input_ids = np.array(batch["input_ids"][0].as_py(), dtype=np.int32)
+        if "labels" in batch.column_names:
+            labels = np.array(batch["labels"][0].as_py(), dtype=np.int32)
         else:
             labels = input_ids.copy()
         return {"input_ids": input_ids, "labels": labels}

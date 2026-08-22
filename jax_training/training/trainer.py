@@ -364,6 +364,7 @@ class JAXTrainer:
                         f"Trained: {tokens_trained / 1e6:.2f}M tokens | "
                         f"ETA: {eta_hours:.2f}h"
                     )
+                    sys.stdout.flush()
                 last_log_time = now
 
             # Checkpointing (asynchronous non-blocking during training, blocking only at final step)
@@ -379,6 +380,8 @@ class JAXTrainer:
                     },
                     blocking=is_final_step,
                 )
+                if self.is_primary:
+                    sys.stdout.flush()
 
             # Smoke test early exit
             if self.config.smoke_test and step >= start_step + 5:
