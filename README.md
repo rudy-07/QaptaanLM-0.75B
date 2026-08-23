@@ -4,10 +4,13 @@
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.1%2B-ee4c2c.svg)](https://pytorch.org/)
 [![Transformers](https://img.shields.io/badge/%F0%9F%A4%97%20Transformers-5.13%2B-orange.svg)](https://github.com/huggingface/transformers)
 [![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)](LICENSE)
-[![Dataset](https://img.shields.io/badge/%F0%9F%A4%97%20Dataset-kaptaan45%2FKapCode--1B-yellow.svg)](https://huggingface.co/datasets/kaptaan45/KapCode-1B)
+[![Pretraining Dataset](https://img.shields.io/badge/%F0%9F%A4%97%20CPT%20Dataset-kaptaan45%2FKapCode--1B-yellow.svg)](https://huggingface.co/datasets/kaptaan45/KapCode-1B)
+[![Instruct Dataset](https://img.shields.io/badge/%F0%9F%A4%97%20SFT%20Dataset-kaptaan45%2FKapInstruct--100M-orange.svg)](https://huggingface.co/datasets/kaptaan45/KapInstruct-100M)
 [![Hardware](https://img.shields.io/badge/Hardware-NVIDIA%20GPU%20%7C%20Google%20TPU%20v5e--8-purple.svg)](https://cloud.google.com/tpu)
 
-**QaptaanLM-0.75B** is an efficient, compact hybrid-attention foundation language model optimized for source code generation, technical reasoning, and long-context code comprehension. Built by stripping the visual encoder from `Qwen/Qwen3.5-0.8B-Base` down to 752M dense parameters, the model undergoes full-parameter Continued Pre-Training (CPT) on **KapCode-1B**, a curated 1-billion-token corpus spanning 13 programming languages, technical documentation, high-quality web text, and mathematical proofs.
+**QaptaanLM-0.75B** is an efficient, compact hybrid-attention foundation language model optimized for source code generation, technical reasoning, and long-context code comprehension. Built by stripping the visual encoder from `Qwen/Qwen3.5-0.8B-Base` down to 752M dense parameters, the model undergoes a two-stage training lifecycle:
+1. **Stage 1: Continued Pre-Training (CPT)** on **[KapCode-1B](https://huggingface.co/datasets/kaptaan45/KapCode-1B)** (1-billion-token curated code & reasoning corpus).
+2. **Stage 2: Supervised Fine-Tuning (SFT)** on **[KapInstruct-100M](https://huggingface.co/datasets/kaptaan45/KapInstruct-100M)** (100-million-token multi-source instruction dataset with assistant-only loss masking).
 
 ---
 
@@ -19,7 +22,9 @@
   - [End-to-End Pipeline](#end-to-end-pipeline)
   - [Distributed Training Topology](#distributed-training-topology)
 - [Model Specification](#model-specification)
-- [Dataset Mixture (KapCode-1B)](#dataset-mixture-kapcode-1b)
+- [Dataset Mixtures](#dataset-mixtures)
+  - [KapCode-1B (CPT Dataset)](#kapcode-1b-cpt-dataset)
+  - [KapInstruct-100M (SFT Dataset)](#kapinstruct-100m-sft-dataset)
   - [Data Sources](#data-sources)
   - [Target Programming Languages](#target-programming-languages)
   - [Data Filtering and Quality Control](#data-filtering-and-quality-control)
@@ -239,6 +244,43 @@ To equip the model with code infilling and multi-line completion capabilities, *
 ```text
 <|fim_prefix|>Prefix Content<|fim_suffix|>Suffix Content<|fim_middle|>Middle Content
 ```
+
+---
+
+## KapInstruct-100M (SFT Dataset)
+
+The Supervised Fine-Tuning (SFT) phase trains on **KapInstruct-100M** ([`kaptaan45/KapInstruct-100M`](https://huggingface.co/datasets/kaptaan45/KapInstruct-100M) / [`Kaggle`](https://www.kaggle.com/datasets/kaptaan45/kapinstruct-100m)), a **100,000,000-token** curated instruction mixture formatted with **Qwen ChatML** and **assistant-only loss masking**.
+
+### 12-Source Balanced Mixture
+
+| # | Source Identifier | Upstream Repository / Config | Domain / Category | Share | Target Usable Tokens | Pinned Commit SHA | Individual License |
+|---|-------------------|------------------------------|-------------------|:-----:|:--------------------:|-------------------|--------------------|
+| 1 | `smol_magpie_ultra` | `HuggingFaceTB/smoltalk` (`smol-magpie-ultra`) | General reasoning & conversation | **18%** | **18,000,000** | `5feaf2fd3ffc...` | Apache-2.0 / Open |
+| 2 | `magicoder_evol` | `ise-uiuc/Magicoder-Evol-Instruct-110K` | Complex programming instructions | **13%** | **13,000,000** | `b0079beaa036...` | Apache-2.0 |
+| 3 | `code_debugging` | `m-a-p/CodeFeedback-Filtered-Instruction` | Bug fixing, compiler error analysis, repair | **10%** | **10,000,000** | `a08c213a9748...` | Apache-2.0 |
+| 4 | `openmathinstruct2` | `nvidia/OpenMathInstruct-2` (`train_5M`) | Math problem solving & synthesis | **11%** | **11,000,000** | `469216e3f46f...` | CC-BY-4.0 |
+| 5 | `openhermes_2_5` | `teknium/OpenHermes-2.5` | Broad conversational QA & instruction | **9%** | **9,000,000** | `b82037821055...` | MIT / Open |
+| 6 | `magicoder_oss` | `ise-uiuc/Magicoder-OSS-Instruct-75K` | Open-source code generation | **8%** | **8,000,000** | `5f839b1f368a...` | MIT |
+| 7 | `openthoughts_reasoning` | `open-thoughts/OpenThoughts-114k` | General & STEM reasoning | **7%** | **7,000,000** | `bd093c3994fd...` | Apache-2.0 |
+| 8 | `numinamath_cot` | `AI-MO/NuminaMath-CoT` | Competition math & CoT reasoning | **6%** | **6,000,000** | `9d8d210c9f6a...` | Apache-2.0 |
+| 9 | `tulu3_sft` | `allenai/tulu-3-sft-mixture` | High-fidelity instruction following | **6%** | **6,000,000** | `b14afda60f1b...` | ODC-By |
+| 10 | `self_oss_starcoder2` | `bigcode/self-oss-instruct-sc2-exec-filter-50k` | Code reasoning with execution validation | **5%** | **5,000,000** | `356bb069eee8...` | ODC-By |
+| 11 | `stem_qa` | `TIGER-Lab/WebInstructSub` | Science, physics, chemistry, engineering QA | **4%** | **4,000,000** | `559b33b6bcd3...` | Apache-2.0 |
+| 12 | `smol_constraints` | `HuggingFaceTB/smoltalk` (`smol-constraints`) | Strict constraint adherence | **3%** | **3,000,000** | `5feaf2fd3ffc...` | Apache-2.0 / Open |
+| | **TOTAL** | | | **100%** | **100,000,000** | | |
+
+### ChatML Alignment & Assistant-Only Loss Masking
+
+Each dialogue turn follows the ChatML schema:
+```text
+<|im_start|>system\nYou are a helpful and harmless assistant.<|im_end|>\n
+<|im_start|>user\nHow do I implement quicksort in Python?<|im_end|>\n
+<|im_start|>assistant\ndef quicksort(arr):\n    ...<|im_end|>\n
+```
+
+- **Prompt Tokens Masked (`labels = -100`)**: System prompt, user turns, and `<|im_start|>` headers.
+- **Trainable Tokens (`labels = token_ids`)**: Assistant response spans only. This directs 100% of gradient updates towards response syntax and reasoning without wasting capacity memorizing prompts.
+- **Global Deduplication**: Full dialogues indexed via exact SHA-256 to eliminate cross-source duplicates.
 
 ---
 
@@ -534,16 +576,14 @@ This project is open-sourced under the **Apache 2.0 License**.
 - Base model weights and architecture adapted from **Qwen3.5-0.8B-Base**, developed by the **Qwen Team (Alibaba Cloud)** under the [Apache 2.0 License](https://huggingface.co/Qwen/Qwen3.5-0.8B-Base/blob/main/LICENSE).
 
 ### Upstream Dataset Attribution
-- **The Stack v3**: Developed by BigCode / Hugging Face.
-- **The Vault**: Developed by FPT Software AI Center (Fsoft-AIC).
-- **FineWeb-HQ**: Developed by EPFL / Hugging Face.
-- **OpenWebMath**: Developed by OpenWebMath team.
+- **CPT Datasets**: The Stack v3 (BigCode), The Vault (Fsoft-AIC), FineWeb-HQ (EPFL), OpenWebMath.
+- **SFT Datasets**: SmolTalk (HuggingFaceTB), Magicoder-Evol & Magicoder-OSS (ISE UIUC), CodeFeedback-Filtered (M-A-P), OpenMathInstruct-2 (NVIDIA), OpenHermes-2.5 (Teknium), OpenThoughts-114k (Open-Thoughts), NuminaMath-CoT (AI-MO), Tulu-3 (Allen AI), Self-OSS StarCoder2 (BigCode), WebInstructSub (TIGER-Lab).
 
 ---
 
 ## Citation
 
-If you find QaptaanLM-0.75B or the KapCode-1B dataset useful in your research or applications, please cite:
+If you find QaptaanLM-0.75B, KapCode-1B, or KapInstruct-100M useful in your research or applications, please cite:
 
 ```bibtex
 @misc{qaptaanlm2026,
@@ -561,6 +601,16 @@ If you find QaptaanLM-0.75B or the KapCode-1B dataset useful in your research or
   author  = {Rudy and Contributors},
   year    = {2026},
   url     = {https://huggingface.co/datasets/kaptaan45/KapCode-1B},
+  note    = {Hugging Face Dataset}
+}
+```
+
+```bibtex
+@misc{kapinstruct100m2026,
+  title   = {{KapInstruct-100M}: A Curated 100-Million Token Multi-Source Instruction Tuning Dataset for Compact Models},
+  author  = {Rudy and Contributors},
+  year    = {2026},
+  url     = {https://huggingface.co/datasets/kaptaan45/KapInstruct-100M},
   note    = {Hugging Face Dataset}
 }
 ```

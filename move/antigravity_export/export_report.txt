@@ -1,0 +1,27 @@
+============================================================
+  EXPORT REPORT
+============================================================
+
+  Time:      2026-08-23 00:58:34
+  Total:     2
+  Exported:  2
+  Failed:    0
+
+------------------------------------------------------------
+  LS ENDPOINT FAILURES
+------------------------------------------------------------
+  These instances failed to return conversation lists.
+  Affected conversations were recovered via .pb scanning
+  but may have missing titles.
+
+  1. Port 65010 - empty response or timeout
+
+------------------------------------------------------------
+  EXPORTED CONVERSATIONS (2)
+------------------------------------------------------------
+    1. [unindexed] 953f1a9d...
+       Messages: 0  |  ID: 953f1a9d...
+    2. LLM Model Performance Comparison
+       Messages: 65  |  ID: 7f6284c8...
+
+============================================================
