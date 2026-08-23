@@ -1,0 +1,268 @@
+# ==============================================================================
+# KapInstruct-100M: Dataset Configuration
+# ==============================================================================
+# Target: Exactly 100,000,000 final usable content tokens post-filtering & dedup
+# Tokenizer: Qwen/Qwen3.5-0.8B-Base (ChatML format)
+# Sequence Length: 4096 packed sequences
+# Loss Policy: assistant_only (trainable loss calculated on assistant outputs only)
+# ==============================================================================
+
+global:
+  name: "KapInstruct-100M"
+  version: "1.0.0"
+  target_usable_tokens: 100_000_000  # 100M usable content tokens
+  tokenizer: "Qwen/Qwen3.5-0.8B-Base"
+  tokenizer_revision: "main"
+  seed: 42
+  default_oversample_factor: 1.4
+  loss_policy: "assistant_only"  # "assistant_only" or "all_tokens"
+  chat_template_format: "chatml" # "chatml" or "auto"
+  publication:
+    hf_dataset_id: "kaptaan45/KapInstruct-100M"
+    kaggle_dataset_id: "kaptaan45/kapinstruct-100m"
+
+# ==============================================================================
+# Source Definitions & Exact Token Allocations
+# ==============================================================================
+sources:
+  # 1. SmolTalk / Smol-Magpie-Ultra (18%)
+  smol_magpie_ultra:
+    source_id: "HuggingFaceTB/smoltalk"
+    config: "smol-magpie-ultra"
+    split: "train"
+    commit_sha: "5feaf2fd3ffca7c237fc38d1861bc30365d48ffa"
+    license: "Apache-2.0 / Open"
+    domain: "general_reasoning_conversation"
+    target_share: 0.18
+    target_tokens: 18_000_000
+    format_type: "messages"
+    streaming: true
+    min_turns: 1
+    require_english: true
+
+  # 2. Magicoder-Evol-Instruct-110K (13%)
+  magicoder_evol:
+    source_id: "ise-uiuc/Magicoder-Evol-Instruct-110K"
+    config: null
+    split: "train"
+    commit_sha: "b0079beaa0361d82412520b873715bee59cc7dd4"
+    license: "Apache-2.0"
+    domain: "programming_instructions"
+    target_share: 0.13
+    target_tokens: 13_000_000
+    format_type: "instruction_response"
+    streaming: true
+    require_english: true
+
+  # 3. Magicoder-OSS-Instruct-75K (8%)
+  magicoder_oss:
+    source_id: "ise-uiuc/Magicoder-OSS-Instruct-75K"
+    config: null
+    split: "train"
+    commit_sha: "5f839b1f368a76b161028bb9edff055db34022b2"
+    license: "MIT"
+    domain: "code_generation"
+    target_share: 0.08
+    target_tokens: 8_000_000
+    format_type: "problem_solution"
+    streaming: true
+    require_english: true
+
+  # 4. OpenMathInstruct-2 (11%)
+  openmathinstruct2:
+    source_id: "nvidia/OpenMathInstruct-2"
+    config: "default"
+    split: "train_5M"
+    commit_sha: "469216e3f46f4dacf476b382e192485ea51a143e"
+    license: "CC-BY-4.0"
+    domain: "math_problem_solving"
+    target_share: 0.11
+    target_tokens: 11_000_000
+    format_type: "problem_generated_solution"
+    streaming: true
+    preserve_reasoning: true
+    require_english: true
+
+  # 5. NuminaMath-CoT (6%)
+  numinamath_cot:
+    source_id: "AI-MO/NuminaMath-CoT"
+    config: null
+    split: "train"
+    commit_sha: "9d8d210c9f6a36c8f3cd84045668c9b7800ef517"
+    license: "Apache-2.0"
+    domain: "competition_math_cot"
+    target_share: 0.06
+    target_tokens: 6_000_000
+    format_type: "problem_solution"
+    streaming: true
+    preserve_reasoning: true
+    require_english: true
+
+  # 6. OpenThoughts Reasoning (7%)
+  openthoughts_reasoning:
+    source_id: "open-thoughts/OpenThoughts-114k"
+    config: null
+    split: "train"
+    commit_sha: "bd093c3994fd54d2390985b66988ddf282a55eb6"
+    license: "Apache-2.0"
+    domain: "general_stem_reasoning"
+    target_share: 0.07
+    target_tokens: 7_000_000
+    format_type: "conversations"
+    streaming: true
+    preserve_reasoning: true
+    require_english: true
+
+  # 7. OpenHermes-2.5 (9%)
+  openhermes_2_5:
+    source_id: "parquet"
+    data_files: "https://huggingface.co/datasets/teknium/OpenHermes-2.5/resolve/refs%2Fconvert%2Fparquet/default/train/0000.parquet"
+    split: "train"
+    commit_sha: "b82037821055c377bed0d495e72e46de3bc72e84"
+    license: "MIT / Open"
+    domain: "general_conversational_qa"
+    target_share: 0.09
+    target_tokens: 9_000_000
+    format_type: "conversations"
+    streaming: true
+    require_english: true
+
+  # 8. Tulu 3 SFT Mixture (6%)
+  tulu3_sft:
+    source_id: "allenai/tulu-3-sft-mixture"
+    config: null
+    split: "train"
+    commit_sha: "b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"
+    license: "ODC-By"
+    domain: "instruction_following"
+    target_share: 0.06
+    target_tokens: 6_000_000
+    format_type: "messages"
+    streaming: true
+    require_english: true
+
+  # 9. Self-OSS-Starcoder2-Instruct (5%)
+  self_oss_starcoder2:
+    source_id: "bigcode/self-oss-instruct-sc2-exec-filter-50k"
+    config: null
+    split: "train"
+    commit_sha: "356bb069eee815daa6e23e9a282eeefe1490ad44"
+    license: "ODC-By"
+    domain: "code_reasoning_execution"
+    target_share: 0.05
+    target_tokens: 5_000_000
+    format_type: "instruction_response"
+    streaming: true
+    require_english: true
+
+  # 10. Smol-Constraints (3%)
+  smol_constraints:
+    source_id: "HuggingFaceTB/smoltalk"
+    config: "smol-constraints"
+    split: "train"
+    commit_sha: "5feaf2fd3ffca7c237fc38d1861bc30365d48ffa"
+    license: "Apache-2.0 / Open"
+    domain: "constraint_adherence"
+    target_share: 0.03
+    target_tokens: 3_000_000
+    format_type: "messages"
+    streaming: true
+    require_english: true
+
+  # 11. Technical/STEM QA (4%)
+  stem_qa:
+    source_id: "TIGER-Lab/WebInstructSub"
+    config: null
+    split: "train"
+    commit_sha: "559b33b6bcd34da3da047bb235532941026955a4"
+    license: "Apache-2.0"
+    domain: "technical_stem_qa"
+    target_share: 0.04
+    target_tokens: 4_000_000
+    format_type: "question_answer"
+    filter_to_stem: true
+    streaming: true
+    require_english: true
+
+  # 12. Code Debugging & Repair (10%)
+  code_debugging:
+    source_id: "m-a-p/CodeFeedback-Filtered-Instruction"
+    config: null
+    split: "train"
+    commit_sha: "a08c213a9748c66c15d0225814be80a2e77adf4a"
+    license: "Apache-2.0"
+    domain: "debugging_code_repair"
+    target_share: 0.10
+    target_tokens: 10_000_000
+    format_type: "query_answer"
+    streaming: true
+    require_english: true
+
+# ==============================================================================
+# Quality Filtering Configuration
+# ==============================================================================
+filters:
+  # Language detection
+  language_detection:
+    enabled: true
+    min_english_confidence: 0.65
+    allow_code_mixed_english: true
+
+  # Code quality & language normalization
+  code_languages:
+    allowlist:
+      - "python"
+      - "javascript"
+      - "typescript"
+      - "java"
+      - "c"
+      - "cpp"
+      - "csharp"
+      - "go"
+      - "rust"
+      - "ruby"
+      - "php"
+      - "sql"
+      - "shell"
+      - "html"
+      - "css"
+      - "dockerfile"
+    reject_secrets: true
+    reject_minified: true
+
+  # General instruction filters
+  general:
+    min_prompt_length_chars: 10
+    min_response_length_chars: 15
+    max_response_length_chars: 120_000
+    max_repeated_line_ratio: 0.35
+    reject_prompt_injection: true
+
+  # Math quality filters
+  math:
+    reject_broken_latex: true
+    reject_ocr_artifacts: true
+    preserve_math_symbols: true
+
+# ==============================================================================
+# Deduplication Configuration
+# ==============================================================================
+deduplication:
+  global_exact:
+    enabled: true
+    algorithm: "sha256"
+    normalize_whitespace: true
+    normalize_case: false  # Case sensitive for code accuracy
+  minhash:
+    enabled: false
+    threshold: 0.80
+
+# ==============================================================================
+# Tokenization & Packing Configuration
+# ==============================================================================
+processing:
+  output_format: "arrow"  # "arrow" (IPC) or "parquet"
+  max_seq_length: 4096
+  shard_size_mb: 50
+  max_sequences_per_shard: 2000
+  checkpoint_interval_docs: 20000

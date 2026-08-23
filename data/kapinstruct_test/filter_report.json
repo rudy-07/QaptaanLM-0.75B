@@ -1,0 +1,90 @@
+{
+  "smol_magpie_ultra": {
+    "total_seen": 4,
+    "total_passed": 4,
+    "pass_rate": "100.00%",
+    "rejection_reasons": {}
+  },
+  "magicoder_evol": {
+    "total_seen": 6,
+    "total_passed": 4,
+    "pass_rate": "66.67%",
+    "rejection_reasons": {
+      "ocr_noise_artifact": 2
+    }
+  },
+  "magicoder_oss": {
+    "total_seen": 6,
+    "total_passed": 5,
+    "pass_rate": "83.33%",
+    "rejection_reasons": {
+      "ocr_noise_artifact": 1
+    }
+  },
+  "openmathinstruct2": {
+    "total_seen": 9,
+    "total_passed": 9,
+    "pass_rate": "100.00%",
+    "rejection_reasons": {}
+  },
+  "numinamath_cot": {
+    "total_seen": 8,
+    "total_passed": 7,
+    "pass_rate": "87.50%",
+    "rejection_reasons": {
+      "excessive_repetition": 1
+    }
+  },
+  "openthoughts_reasoning": {
+    "total_seen": 7,
+    "total_passed": 4,
+    "pass_rate": "57.14%",
+    "rejection_reasons": {
+      "ocr_noise_artifact": 3
+    }
+  },
+  "openhermes_2_5": {
+    "total_seen": 6,
+    "total_passed": 5,
+    "pass_rate": "83.33%",
+    "rejection_reasons": {
+      "ocr_noise_artifact": 1
+    }
+  },
+  "tulu3_sft": {
+    "total_seen": 1,
+    "total_passed": 0,
+    "pass_rate": "0.00%",
+    "rejection_reasons": {
+      "ocr_noise_artifact": 1
+    }
+  },
+  "self_oss_starcoder2": {
+    "total_seen": 3,
+    "total_passed": 2,
+    "pass_rate": "66.67%",
+    "rejection_reasons": {
+      "ocr_noise_artifact": 1
+    }
+  },
+  "smol_constraints": {
+    "total_seen": 4,
+    "total_passed": 4,
+    "pass_rate": "100.00%",
+    "rejection_reasons": {}
+  },
+  "stem_qa": {
+    "total_seen": 4,
+    "total_passed": 4,
+    "pass_rate": "100.00%",
+    "rejection_reasons": {}
+  },
+  "code_debugging": {
+    "total_seen": 6,
+    "total_passed": 3,
+    "pass_rate": "50.00%",
+    "rejection_reasons": {
+      "ocr_noise_artifact": 3
+    }
+  }
+}

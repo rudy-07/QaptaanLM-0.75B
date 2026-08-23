@@ -1,0 +1,8 @@
+{
+  "total_seen": 51,
+  "unique_records": 51,
+  "total_duplicates": 0,
+  "dedup_rate": "0.00%",
+  "duplicates_by_source": {},
+  "top_cross_source_collisions": {}
+}

@@ -5,12 +5,13 @@ import requests
 import json
 import os
 
-TOKEN = "KGAT_611f927b3ce3c16efd90315ff16b02e7"
+TOKEN = os.environ.get("KAGGLE_API_TOKEN", "")
 URL = "https://www.kaggle.com/api/v1/kernels/push"
 HEADERS = {
-    "Authorization": f"Bearer {TOKEN}",
+    "Authorization": f"Bearer {TOKEN}" if TOKEN else "",
     "Content-Type": "application/json"
 }
+
 
 notebook_cells = [
     {
