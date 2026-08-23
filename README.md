@@ -192,7 +192,7 @@ flowchart LR
 
 ## Dataset Mixture (KapCode-1B)
 
-The Continued Pre-Training phase trains on **KapCode-1B** ([`kaptaan45/KapCode-1B`](https://huggingface.co/datasets/kaptaan45/KapCode-1B)), a 1-billion-token curated dataset composed of 5 domain partitions:
+The Continued Pre-Training phase trains on **KapCode-1B** ([`GitHub`](https://github.com/rudy-07/KapCode-1B) | [`Hugging Face`](https://huggingface.co/datasets/kaptaan45/KapCode-1B) | [`Kaggle`](https://www.kaggle.com/datasets/kaptaan45/kapcode-1b)), a 1-billion-token curated dataset composed of 5 domain partitions:
 
 ### Data Sources
 
@@ -249,7 +249,7 @@ To equip the model with code infilling and multi-line completion capabilities, *
 
 ## KapInstruct-100M (SFT Dataset)
 
-The Supervised Fine-Tuning (SFT) phase trains on **KapInstruct-100M** ([`kaptaan45/KapInstruct-100M`](https://huggingface.co/datasets/kaptaan45/KapInstruct-100M) / [`Kaggle`](https://www.kaggle.com/datasets/kaptaan45/kapinstruct-100m)), a **100,000,000-token** curated instruction mixture formatted with **Qwen ChatML** and **assistant-only loss masking**.
+The Supervised Fine-Tuning (SFT) phase trains on **KapInstruct-100M** ([`GitHub`](https://github.com/rudy-07/KapInstruct-100M) | [`Hugging Face`](https://huggingface.co/datasets/kaptaan45/KapInstruct-100M) | [`Kaggle`](https://www.kaggle.com/datasets/kaptaan45/kapinstruct-100m)), a **100,000,000-token** curated instruction mixture formatted with **Qwen ChatML** and **assistant-only loss masking**.
 
 ### 12-Source Balanced Mixture
 

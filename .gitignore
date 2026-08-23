@@ -22,11 +22,16 @@ env/
 # Project data (large files)
 /models/
 !jax_training/models/
-/data/processed/
-/data/raw/
+/data/
+*.arrow
+*.parquet
 checkpoints/
 logs/*.log
 logs/TPU_CPT_TROUBLESHOOTING.md
+
+# Scratch & Temporary Folders
+scratch/
+move/
 
 # Notebooks checkpoints
 .ipynb_checkpoints/
@@ -35,7 +40,9 @@ logs/TPU_CPT_TROUBLESHOOTING.md
 .DS_Store
 Thumbs.db
 
-# Secrets
+# Secrets & Credentials
 .env
 *.key
+*.token
+kaggle.json
 

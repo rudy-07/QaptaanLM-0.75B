@@ -54,9 +54,17 @@ dataset_info:
 
 # KapCode-1B: Curated 1-Billion Token Dataset for Compact Code Models
 
+<p align="center">
+  <img src="https://huggingface.co/datasets/kaptaan45/KapCode-1B/resolve/main/kapcode_cover_image.jpg" width="100%" alt="KapCode-1B Banner">
+</p>
+
 [![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Tokens](https://img.shields.io/badge/Tokens-1%20Billion-blue.svg)](#dataset-composition)
 [![Languages](https://img.shields.io/badge/Languages-13%20Programming%20%2B%20English-orange.svg)](#target-languages)
+[![GitHub](https://img.shields.io/badge/GitHub-KapCode--1B-181717.svg?logo=github)](https://github.com/rudy-07/KapCode-1B)
+[![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-kaptaan45%2FKapCode--1B-orange.svg)](https://huggingface.co/datasets/kaptaan45/KapCode-1B)
+[![Kaggle Dataset](https://img.shields.io/badge/Kaggle-kaptaan45%2Fkapcode--1b-20BEFF.svg?logo=kaggle)](https://www.kaggle.com/datasets/kaptaan45/kapcode-1b)
+[![Starter Notebook](https://img.shields.io/badge/Kaggle-Starter%20Notebook-20BEFF.svg?logo=kaggle)](https://www.kaggle.com/code/kaptaan45/kapcode-1b-dataset-quickstart)
 [![Associated Model](https://img.shields.io/badge/Model-QaptaanLM--0.75B-purple.svg)](https://github.com/rudy-07/QaptaanLM-0.75B)
 
 **KapCode-1B** is a high-quality, 1-billion-token curated dataset designed for **Continued Pre-Training (CPT)** and domain adaptation of compact Large Language Models. Engineered specifically to empower models under 1 billion parameters with robust code generation, technical comprehension, mathematical reasoning, and Fill-in-the-Middle (FIM) infilling capabilities, KapCode-1B combines multi-lingual code, architecture documentation, function-level snippets, high-quality STEM web text, and formal mathematical proofs.

@@ -5,7 +5,7 @@ import json
 import os
 import requests
 
-TOKEN = os.environ.get("KAGGLE_API_TOKEN") or "KGAT_988bf9b71ea34b60bbce6cbac69677f3"
+TOKEN = os.environ.get("KAGGLE_API_TOKEN") or os.environ.get("KAGGLE_KEY")
 URL = "https://www.kaggle.com/api/v1/kernels/push"
 HEADERS = {
     "Authorization": f"Bearer {TOKEN}" if TOKEN else "",
@@ -204,7 +204,7 @@ notebook_json = {
 }
 
 payload = {
-    "slug": "kaptaan45/kapinstruct-100m-dataset-quickstart",
+    "slug": "kaptaan45/kapinstruct-100m-dataset-exploration-quickstart",
     "newTitle": "KapInstruct-100M Dataset Exploration & Quickstart",
     "text": json.dumps(notebook_json),
     "language": "python",

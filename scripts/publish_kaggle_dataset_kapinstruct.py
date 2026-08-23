@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 import requests
 
-TOKEN = os.environ.get("KAGGLE_API_TOKEN") or "KGAT_988bf9b71ea34b60bbce6cbac69677f3"
+TOKEN = os.environ.get("KAGGLE_API_TOKEN") or os.environ.get("KAGGLE_KEY")
 DATASET_SLUG = "kapinstruct-100m"
 OWNER_SLUG = "kaptaan45"
 URL = f"https://www.kaggle.com/api/v1/datasets/metadata/{OWNER_SLUG}/{DATASET_SLUG}"
@@ -34,9 +34,10 @@ def prepare_kaggle_description() -> str:
 
     kaggle_header = """[![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-kaptaan45%2FKapInstruct--100M-orange.svg)](https://huggingface.co/datasets/kaptaan45/KapInstruct-100M)
 [![GitHub](https://img.shields.io/badge/GitHub-QaptaanLM--0.75B-181717.svg?logo=github)](https://github.com/rudy-07/QaptaanLM-0.75B)
-[![Starter Notebook](https://img.shields.io/badge/Kaggle-Starter%20Notebook-20BEFF.svg?logo=kaggle)](https://www.kaggle.com/code/kaptaan45/kapinstruct-100m-builder)
-[![Tokens: 100 Million](https://img.shields.io/badge/Tokens-100%20Million-blue.svg)](#dataset-composition--source-mixture)
-[![Loss Masking: Assistant Only](https://img.shields.io/badge/Loss-Assistant%20Only-red.svg)](#chatml-formatting--loss-masking)
+[![Quickstart Notebook](https://img.shields.io/badge/Kaggle-Quickstart%20Notebook-20BEFF.svg?logo=kaggle)](https://www.kaggle.com/code/kaptaan45/kapinstruct-100m-dataset-exploration-quickstart)
+[![Builder Notebook](https://img.shields.io/badge/Kaggle-Builder%20Notebook-blueviolet.svg?logo=kaggle)](https://www.kaggle.com/code/kaptaan45/kapinstruct-100m-build)
+[![Tokens: 100M](https://img.shields.io/badge/Tokens-100%20Million-blue.svg)](#dataset-composition--source-mixture)
+[![Loss: Assistant Only](https://img.shields.io/badge/Loss-Assistant%20Only-red.svg)](#chatml-formatting--loss-masking)
 
 """
 
@@ -61,7 +62,21 @@ print(f"Sequence length: {len(dataset[0]['input_ids'])} tokens")
 print(f"Trainable tokens in seq 0: {sum(1 for l in dataset[0]['labels'] if l != -100)}")
 ```
 """
-    enhanced = kaggle_header + body_markdown.replace(
+    # Replace markdown header badges with clean kaggle header to avoid duplicates
+    if "<p align=\"center\">" in body_markdown:
+        # Keep banner image, insert kaggle badges right after
+        parts = body_markdown.split("</p>", 1)
+        banner_part = parts[0] + "</p>\n\n"
+        rest = parts[1].strip()
+        # Strip original badge lines from rest
+        lines = rest.split("\n")
+        filtered_lines = [l for l in lines if not l.startswith("[![")]
+        cleaned_body = "\n".join(filtered_lines).strip()
+        enhanced = banner_part + kaggle_header + cleaned_body
+    else:
+        enhanced = kaggle_header + body_markdown
+
+    enhanced = enhanced.replace(
         "## Dataset Loading and Usage",
         "## Dataset Loading and Usage\n" + kaggle_quickstart
     )
@@ -111,7 +126,7 @@ def build_dataset_metadata(upload_dir: Path):
         }
     ]
 
-    for i in range(10):
+    for i in range(25):
         shard_name = f"shard_{i:05d}.arrow"
         files_meta.append({
             "name": shard_name,
@@ -161,7 +176,7 @@ def update_kaggle_metadata():
         response = requests.post(URL, headers=HEADERS, json=payload, timeout=30)
         print("Status code:", response.status_code)
         if response.status_code in (200, 201):
-            print("Successfully updated Kaggle dataset metadata!")
+            print("Successfully updated Kaggle dataset metadata without horizontal overflow!")
         else:
             print("Response:", response.text)
     except Exception as e:

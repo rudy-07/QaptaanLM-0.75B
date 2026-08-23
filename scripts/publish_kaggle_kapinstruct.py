@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger("publish_kaggle_kapinstruct")
 
 KAGGLE_USERNAME = "kaptaan45"
-KAGGLE_API_TOKEN = os.environ.get("KAGGLE_API_TOKEN") or os.environ.get("KAGGLE_KEY") or "KGAT_988bf9b71ea34b60bbce6cbac69677f3"
+KAGGLE_API_TOKEN = os.environ.get("KAGGLE_API_TOKEN") or os.environ.get("KAGGLE_KEY")
 
 
 def push_to_kaggle(notebook_path: str = "notebooks/kaggle_kapinstruct_build_and_publish.ipynb"):

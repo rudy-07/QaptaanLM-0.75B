@@ -69,10 +69,12 @@ dataset_info:
 [![Tokens](https://img.shields.io/badge/Usable%20Tokens-100%20Million-blue.svg)](#dataset-composition)
 [![Dialogue Format](https://img.shields.io/badge/Format-ChatML%20%7C%20Qwen-orange.svg)](#chatml-formatting--loss-masking)
 [![Loss Policy](https://img.shields.io/badge/Loss%20Masking-Assistant--Only-red.svg)](#chatml-formatting--loss-masking)
-[![Associated Model](https://img.shields.io/badge/Model-QaptaanLM--0.75B-purple.svg)](https://github.com/rudy-07/QaptaanLM-0.75B)
+[![GitHub](https://img.shields.io/badge/GitHub-KapInstruct--100M-181717.svg?logo=github)](https://github.com/rudy-07/KapInstruct-100M)
+[![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-kaptaan45%2FKapInstruct--100M-orange.svg)](https://huggingface.co/datasets/kaptaan45/KapInstruct-100M)
 [![Kaggle Dataset](https://img.shields.io/badge/Kaggle-kaptaan45%2Fkapinstruct--100m-20BEFF.svg?logo=kaggle)](https://www.kaggle.com/datasets/kaptaan45/kapinstruct-100m)
 [![Starter Notebook](https://img.shields.io/badge/Kaggle-Quickstart%20Notebook-20BEFF.svg?logo=kaggle)](https://www.kaggle.com/code/kaptaan45/kapinstruct-100m-dataset-exploration-quickstart)
 [![Builder Notebook](https://img.shields.io/badge/Kaggle-Builder%20Notebook-blueviolet.svg?logo=kaggle)](https://www.kaggle.com/code/kaptaan45/kapinstruct-100m-dataset-builder-hf-publisher)
+[![Associated Model](https://img.shields.io/badge/Model-QaptaanLM--0.75B-purple.svg)](https://github.com/rudy-07/QaptaanLM-0.75B)
 
 **KapInstruct-100M** is a high-fidelity, 100-million-token instruction-tuning dataset engineered for **Supervised Fine-Tuning (SFT)** and alignment of compact language models (under 1 billion parameters). Formatted with the **Qwen ChatML** chat template and tokenized using `Qwen/Qwen3.5-0.8B-Base`, the dataset enforces strict **assistant-only loss masking** (masking user prompts and structural delimiters to `-100`) to maximize training efficiency.
 
@@ -108,36 +110,37 @@ Supervised fine-tuning of compact models (0.5B to 1.5B parameters) is highly sen
 
 KapInstruct-100M is composed of 12 verified upstream sources sampled according to strict token budgets:
 
-| # | Source Identifier | Upstream Repository / Config | Domain / Category | Share | Target Usable Tokens | Pinned Commit SHA | Individual License |
-|---|-------------------|------------------------------|-------------------|:-----:|:--------------------:|-------------------|--------------------|
-| 1 | `smol_magpie_ultra` | `HuggingFaceTB/smoltalk` (`smol-magpie-ultra`) | General reasoning & conversation | **18%** | **18,000,000** | `5feaf2fd3ffca7c237fc38d1861bc30365d48ffa` | Apache-2.0 / Open |
-| 2 | `magicoder_evol` | `ise-uiuc/Magicoder-Evol-Instruct-110K` | Complex programming instructions | **13%** | **13,000,000** | `b0079beaa0361d82412520b873715bee59cc7dd4` | Apache-2.0 |
-| 3 | `code_debugging` | `m-a-p/CodeFeedback-Filtered-Instruction` | Bug fixing, compiler error analysis, repair | **10%** | **10,000,000** | `a08c213a9748c66c15d0225814be80a2e77adf4a` | Apache-2.0 |
-| 4 | `openmathinstruct2` | `nvidia/OpenMathInstruct-2` (`train_5M`) | Math problem solving & synthesis | **11%** | **11,000,000** | `469216e3f46f4dacf476b382e192485ea51a143e` | CC-BY-4.0 |
-| 5 | `openhermes_2_5` | `teknium/OpenHermes-2.5` | Broad conversational QA & instruction | **9%** | **9,000,000** | `b82037821055c377bed0d495e72e46de3bc72e84` | MIT / Open |
-| 6 | `magicoder_oss` | `ise-uiuc/Magicoder-OSS-Instruct-75K` | Open-source code generation | **8%** | **8,000,000** | `5f839b1f368a76b161028bb9edff055db34022b2` | MIT |
-| 7 | `openthoughts_reasoning` | `open-thoughts/OpenThoughts-114k` | General & STEM reasoning | **7%** | **7,000,000** | `bd093c3994fd54d2390985b66988ddf282a55eb6` | Apache-2.0 |
-| 8 | `numinamath_cot` | `AI-MO/NuminaMath-CoT` | Competition math & CoT reasoning | **6%** | **6,000,000** | `9d8d210c9f6a36c8f3cd84045668c9b7800ef517` | Apache-2.0 |
-| 9 | `tulu3_sft` | `allenai/tulu-3-sft-mixture` | High-fidelity instruction following | **6%** | **6,000,000** | `b14afda60f1bbebe55d5d2fa1e4df5042f97f8be` | ODC-By |
-| 10 | `self_oss_starcoder2` | `bigcode/self-oss-instruct-sc2-exec-filter-50k` | Code reasoning with execution validation | **5%** | **5,000,000** | `356bb069eee815daa6e23e9a282eeefe1490ad44` | ODC-By |
-| 11 | `stem_qa` | `TIGER-Lab/WebInstructSub` | Science, physics, chemistry, engineering QA | **4%** | **4,000,000** | `559b33b6bcd34da3da047bb235532941026955a4` | Apache-2.0 |
-| 12 | `smol_constraints` | `HuggingFaceTB/smoltalk` (`smol-constraints`) | Strict constraint adherence | **3%** | **3,000,000** | `5feaf2fd3ffca7c237fc38d1861bc30365d48ffa` | Apache-2.0 / Open |
-| | **TOTAL** | | | **100%** | **100,000,000** | | |
+| Source | Domain / Category | Share | Tokens | License |
+| :--- | :--- | :---:| :---:| :--- |
+| **Smol-Magpie-Ultra** | General reasoning & conversation | **18%** | 18,000,000 | Apache-2.0 |
+| **Magicoder-Evol** | Complex programming instructions | **13%** | 13,000,000 | Apache-2.0 |
+| **OpenMathInstruct-2** | Math problem solving & synthesis | **11%** | 11,000,000 | CC-BY-4.0 |
+| **CodeFeedback-Filtered** | Bug fixing & code repair | **10%** | 10,000,000 | Apache-2.0 |
+| **OpenHermes-2.5** | Broad conversational QA | **9%** | 9,000,000 | MIT |
+| **Magicoder-OSS** | Open-source code generation | **8%** | 8,000,000 | MIT |
+| **OpenThoughts-114k** | General & STEM reasoning | **7%** | 7,000,000 | Apache-2.0 |
+| **NuminaMath-CoT** | Competition math reasoning | **6%** | 6,000,000 | Apache-2.0 |
+| **Tulu-3 SFT** | High-fidelity instruction following | **6%** | 6,000,000 | ODC-By |
+| **Self-OSS StarCoder2** | Execution-validated code | **5%** | 5,000,000 | ODC-By |
+| **WebInstructSub** | Science & technical QA | **4%** | 4,000,000 | Apache-2.0 |
+| **Smol-Constraints** | Strict constraint adherence | **3%** | 3,000,000 | Apache-2.0 |
+| **Total** | | **100%** | **100,000,000** | |
 
 ---
 
 ## Domain Allocation Breakdown
 
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│                   KapInstruct-100M Domain Allocation                   │
-└────────────────────────────────────────────────────────────────────────┘
-  ■ Code Generation & Programming  [31%] (Magicoder-Evol, OSS, Self-OSS)
-  ■ General Reasoning & Dialogue   [27%] (Smol-Magpie, OpenHermes-2.5)
-  ■ Mathematical Reasoning (CoT)   [17%] (OpenMathInstruct-2, NuminaMath)
-  ■ Debugging & Error Repair       [10%] (CodeFeedback-Filtered)
-  ■ STEM & Scientific QA           [11%] (OpenThoughts, WebInstructSub)
-  ■ Strict Constraint Adherence    [ 4%] (Smol-Constraints, Tulu-3)
+```text
++-------------------------------------------------------------+
+|             KapInstruct-100M Domain Allocation              |
++-------------------------------------------------------------+
+|  [================]  Code Generation (31% - 31M tokens)     |
+|  [==============]    General Reasoning (27% - 27M tokens)   |
+|  [=========]         Mathematics CoT (17% - 17M tokens)     |
+|  [======]            STEM QA & Science (11% - 11M tokens)   |
+|  [=====]             Debugging & Repair (10% - 10M tokens)  |
+|  [==]                Constraint Adherence (4% - 4M tokens)  |
++-------------------------------------------------------------+
 ```
 
 ---
