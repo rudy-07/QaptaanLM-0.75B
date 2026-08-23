@@ -1,0 +1,13 @@
+{
+  "id": "kaptaan45/kapinstruct-100m-builder",
+  "title": "KapInstruct-100M Dataset Builder & HF Publisher",
+  "code_file": "kaggle_kapinstruct_build_and_publish.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": false,
+  "enable_gpu": false,
+  "enable_internet": true,
+  "dataset_sources": [],
+  "competition_sources": [],
+  "kernel_sources": []
+}

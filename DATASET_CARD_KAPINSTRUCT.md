@@ -61,12 +61,18 @@ dataset_info:
 
 # KapInstruct-100M: Curated 100-Million Token Instruction Tuning Dataset
 
+<p align="center">
+  <img src="https://huggingface.co/datasets/kaptaan45/KapInstruct-100M/resolve/main/kapinstruct_cover_image.jpg" width="100%" alt="KapInstruct-100M Banner">
+</p>
+
 [![License](https://img.shields.io/badge/License-Source--Specific%20(Open)-green.svg)](#licensing-and-provenance)
 [![Tokens](https://img.shields.io/badge/Usable%20Tokens-100%20Million-blue.svg)](#dataset-composition)
 [![Dialogue Format](https://img.shields.io/badge/Format-ChatML%20%7C%20Qwen-orange.svg)](#chatml-formatting--loss-masking)
 [![Loss Policy](https://img.shields.io/badge/Loss%20Masking-Assistant--Only-red.svg)](#chatml-formatting--loss-masking)
 [![Associated Model](https://img.shields.io/badge/Model-QaptaanLM--0.75B-purple.svg)](https://github.com/rudy-07/QaptaanLM-0.75B)
 [![Kaggle Dataset](https://img.shields.io/badge/Kaggle-kaptaan45%2Fkapinstruct--100m-20BEFF.svg?logo=kaggle)](https://www.kaggle.com/datasets/kaptaan45/kapinstruct-100m)
+[![Starter Notebook](https://img.shields.io/badge/Kaggle-Quickstart%20Notebook-20BEFF.svg?logo=kaggle)](https://www.kaggle.com/code/kaptaan45/kapinstruct-100m-dataset-exploration-quickstart)
+[![Builder Notebook](https://img.shields.io/badge/Kaggle-Builder%20Notebook-blueviolet.svg?logo=kaggle)](https://www.kaggle.com/code/kaptaan45/kapinstruct-100m-dataset-builder-hf-publisher)
 
 **KapInstruct-100M** is a high-fidelity, 100-million-token instruction-tuning dataset engineered for **Supervised Fine-Tuning (SFT)** and alignment of compact language models (under 1 billion parameters). Formatted with the **Qwen ChatML** chat template and tokenized using `Qwen/Qwen3.5-0.8B-Base`, the dataset enforces strict **assistant-only loss masking** (masking user prompts and structural delimiters to `-100`) to maximize training efficiency.
 
