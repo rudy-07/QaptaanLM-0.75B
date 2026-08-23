@@ -12,6 +12,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 from huggingface_hub import HfApi, login
 
@@ -72,7 +73,6 @@ def publish_dataset_to_hf(
 
 
 if __name__ == "__main__":
-    from typing import Optional
     parser = argparse.ArgumentParser(description="Publish KapInstruct-100M to Hugging Face Hub")
     parser.add_argument("--data-dir", type=str, default="data/kapinstruct")
     parser.add_argument("--hf-repo", type=str, default="kaptaan45/KapInstruct-100M")
