@@ -123,8 +123,8 @@ def convert_flax_to_pytorch_state_dict(
     # Embed tokens & norm
     if "embed_tokens" in model_params:
         state_dict["model.embed_tokens.weight"] = to_np(model_params["embed_tokens"]["embedding"])
-        # Tied lm_head
-        if config.tie_word_embeddings:
+        # Only add separate lm_head if word embeddings are NOT tied
+        if not config.tie_word_embeddings:
             state_dict["lm_head.weight"] = state_dict["model.embed_tokens.weight"]
 
     if "norm" in model_params:
