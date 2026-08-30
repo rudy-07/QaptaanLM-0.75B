@@ -58,10 +58,13 @@ scripts/check_*.py
 scripts/complete_*.py
 scripts/test_*.py
 scripts/build_*.py
+scripts/run_*.py
+scripts/convert_*.py
 kaggle_staging/
 
 notebooks/kaggle_quickstart_staging/
 metrics/results/
+
 
 
 
