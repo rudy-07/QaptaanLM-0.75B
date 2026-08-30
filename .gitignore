@@ -46,11 +46,21 @@ Thumbs.db
 *.token
 kaggle.json
 
-# Local Publish / Sync / Upload / Fix scripts
+# Local Publish / Sync / Upload / Fix / Push / Staging scripts & artifacts
 scripts/publish_*.py
 scripts/sync_*.py
 scripts/upload_*.py
 scripts/fix_*.py
 scripts/rebuild_and_upload_hf.py
 scripts/generate_comparison_report.py
+scripts/push_*.py
+scripts/check_*.py
+scripts/complete_*.py
+scripts/test_*.py
+scripts/build_jax_sft_notebooks.py
+kaggle_staging/
+notebooks/kaggle_quickstart_staging/
+metrics/results/
+
+
 

@@ -20,7 +20,15 @@ def convert_pytorch_to_flax_params(
 
     def to_jax(tensor):
         if hasattr(tensor, "detach"):
-            tensor = tensor.detach().cpu().numpy()
+            import torch
+            if tensor.dtype == torch.bfloat16:
+                tensor = tensor.to(torch.float32).detach().cpu().numpy()
+            else:
+                tensor = tensor.detach().cpu().numpy()
+        elif hasattr(tensor, "dtype") and "bfloat16" in str(tensor.dtype):
+            tensor = np.array(tensor, dtype=np.float32)
+        elif not isinstance(tensor, (np.ndarray, jnp.ndarray)):
+            tensor = np.array(tensor)
         return jnp.array(tensor, dtype=jnp_dtype)
 
     params: Dict[str, Any] = {"model": {}}

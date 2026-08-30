@@ -185,19 +185,24 @@ class Qwen3_5Attention(nn.Module):
         k = jnp.transpose(key_states, (0, 2, 1, 3))
         v = jnp.transpose(value_states, (0, 2, 1, 3))
 
-        # Causal scaled dot-product attention
-        scores = jnp.matmul(q, jnp.swapaxes(k, -1, -2)) * self.scale  # [B, H, S, S]
-
-        # Causal mask
-        causal_mask = jnp.tril(jnp.ones((seq_len, seq_len), dtype=jnp.bool_))
-        causal_mask = causal_mask[None, None, :, :]
-        scores = jnp.where(causal_mask, scores, -1e9)
-
+        # Hardware-accelerated FlashAttention
         if attention_mask is not None:
-            scores = scores + attention_mask
-
-        attn_weights = jax.nn.softmax(scores.astype(jnp.float32), axis=-1).astype(self.compute_dtype)
-        attn_out = jnp.matmul(attn_weights, v)  # [B, H, S, head_dim]
+            attn_out = jax.nn.dot_product_attention(
+                query=q,
+                key=k,
+                value=v,
+                scale=self.scale,
+                mask=attention_mask,
+                is_causal=True,
+            )
+        else:
+            attn_out = jax.nn.dot_product_attention(
+                query=q,
+                key=k,
+                value=v,
+                scale=self.scale,
+                is_causal=True,
+            )
 
         # Transpose back: [B, S, H, head_dim]
         attn_out = jnp.transpose(attn_out, (0, 2, 1, 3))
@@ -318,7 +323,7 @@ class Qwen3_5GatedDeltaNet(nn.Module):
             v_new = (v_i - v_prime) * b_i_exp
 
             # Attention output: attn_inter = q_i @ state * decay + (q_i @ k_i) * v_new
-            attn_inter = jnp.einsum("bhk,bhkd->bhd", q_i, state) * jnp.exp(g_i)[:, :, None]
+            attn_inter = jnp.einsum("bhk,bhkd->bhd", q_i, state) * decay.squeeze(-1)
             qk_dot = jnp.sum(q_i * k_i, axis=-1, keepdims=True)  # [B, H, 1]
             out_i = attn_inter + qk_dot * v_new
 
@@ -326,7 +331,7 @@ class Qwen3_5GatedDeltaNet(nn.Module):
             new_state = state * decay + jnp.einsum("bhk,bhd->bhkd", k_i, v_new)
             return new_state, out_i
 
-        _, core_out_t = jax.lax.scan(_step_fn, init_state, (q_t, k_t, v_t, beta_t, g_t))
+        _, core_out_t = jax.lax.scan(_step_fn, init_state, (q_t, k_t, v_t, beta_t, g_t), unroll=16)
         core_attn_out = jnp.transpose(core_out_t, (1, 0, 2, 3)).astype(compute_dtype)  # [B, S, H, V_dim]
 
         # RMSNormGated with gate z: [B, S, H, V_dim]

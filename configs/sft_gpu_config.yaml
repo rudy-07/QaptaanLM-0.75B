@@ -1,0 +1,74 @@
+# ============================================================
+# QaptaanLM-0.75B Supervised Fine-Tuning (SFT) GPU Configuration
+# Optimized for NVIDIA RTX Pro 6000 Ada / A6000 (48GB VRAM, SM89/SM86)
+# ============================================================
+
+model:
+  name_or_path: "kaptaan45/QaptaanLM-0.75B"
+  dtype: "bfloat16"
+  trust_remote_code: true
+  revision: "main"
+
+training:
+  output_dir: "checkpoints/sft"
+  run_name: "qaptaanlm-0.75b-sft-gpu"
+  target_tokens: 100_000_000  # 100M tokens (1 epoch baseline)
+
+  # Sequence length: 1024 window (splits 4096 packed records into 4 non-overlapping windows)
+  # Fits recurrent autograd states safely in ~35GB VRAM on GPU
+  max_seq_length: 1024
+  dataset_packed_seq_length: 4096
+
+  # Recurrent batch sizing: micro_batch=1, grad_accum=16 -> 16 sequences = 16,384 tokens/step
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 16
+
+  # Hyperparameters
+  learning_rate: 5.0e-6
+  lr_scheduler_type: "cosine"
+  min_lr_ratio: 0.0
+  warmup_ratio: 0.03
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+
+  # Hardware precision & optimizations
+  bf16: true
+  fp16: false
+  gradient_checkpointing: false
+  use_liger_kernel: false
+  use_sdpa: false              # Use standard eager attention for custom architecture compatibility
+  use_torch_compile: false
+
+  # Optimizer
+  optim: "adamw_torch"
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1.0e-8
+
+  # In-training validation
+  eval_split_ratio: 0.015
+  eval_strategy: "steps"
+  eval_steps: 250
+
+  # Logging & Checkpoints (save every 500 steps, keep latest 2)
+  logging_steps: 25
+  logging_first_step: true
+  save_strategy: "steps"
+  save_steps: 500
+  save_total_limit: 2
+  resume_from_checkpoint: null
+
+  # Data loading
+  dataloader_num_workers: 2
+  dataloader_pin_memory: true
+  seed: 42
+  data_seed: 42
+
+storage:
+  hf_hub:
+    repo_id: "kaptaan45/QaptaanLM-0.75B"
+    push_checkpoints: false
+  processed_data:
+    path: "/kaggle/working/data"
+    format: "arrow"

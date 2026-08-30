@@ -1,0 +1,21 @@
+# Dependencies for Comprehensive LLM Benchmarks Suite
+# ======================================================
+
+# Core inference & dataset loading
+torch>=2.0.0
+transformers>=4.40.0
+datasets>=2.18.0
+accelerate>=0.28.0
+safetensors>=0.4.0
+tqdm>=4.66.0
+pyyaml>=6.0
+tabulate>=0.9.0
+
+# Mathematical expression evaluation
+sympy>=1.12.0
+numpy>=1.24.0
+
+# Optional: Official evaluation harnesses for exact leaderboard reproduction
+lm-eval>=0.4.2
+evalplus>=0.8.0
+bigcodebench>=0.1.0

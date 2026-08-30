@@ -1,0 +1,15 @@
+{
+  "id": "kaptaan45/qaptaanlm-comprehensive-benchmark",
+  "title": "QaptaanLM-0.75B Comprehensive Benchmark Suite",
+  "code_file": "comprehensive_benchmark_kaggle.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": "true",
+  "enable_gpu": "true",
+  "enable_tpu": "false",
+  "enable_internet": "true",
+  "dataset_sources": [],
+  "competition_sources": [],
+  "kernel_sources": [],
+  "model_sources": []
+}

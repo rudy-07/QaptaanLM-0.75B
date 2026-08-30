@@ -1,0 +1,101 @@
+# Reasoning, Intelligence, Math & Knowledge Configuration
+# ==============================================================================
+
+suite: "reasoning"
+
+benchmarks:
+  - id: "mmlu"
+    name: "MMLU (Massive Multitask Language Understanding)"
+    dataset: "cais/mmlu"
+    split: "test"
+    shots: 5
+    metric: "accuracy"
+    mode: "loglikelihood"
+
+  - id: "mmlu_pro"
+    name: "MMLU-Pro (10-Choice Reasoning)"
+    dataset: "TIGER-Lab/MMLU-Pro"
+    split: "test"
+    shots: 5
+    metric: "accuracy"
+    mode: "cot"
+    max_new_tokens: 1024
+
+  - id: "mmlu_redux"
+    name: "MMLU-Redux"
+    dataset: "edinburgh-dawg/mmlu-redux"
+    split: "test"
+    shots: 5
+    metric: "accuracy"
+    mode: "loglikelihood"
+
+  - id: "arc_challenge"
+    name: "ARC-Challenge (AI2 Reasoning Challenge)"
+    dataset: "ai2_arc"
+    subset: "ARC-Challenge"
+    split: "test"
+    shots: 25
+    metric: "accuracy"
+    mode: "loglikelihood"
+
+  - id: "hellaswag"
+    name: "HellaSwag (Commonsense Continuation)"
+    dataset: "Rowan/hellaswag"
+    split: "validation"
+    shots: 10
+    metric: "accuracy"
+    mode: "loglikelihood"
+
+  - id: "winogrande"
+    name: "Winogrande (Coreference Disambiguation)"
+    dataset: "winogrande"
+    subset: "winogrande_xl"
+    split: "validation"
+    shots: 5
+    metric: "accuracy"
+    mode: "loglikelihood"
+
+  - id: "truthfulqa"
+    name: "TruthfulQA (Factuality & Hallucination)"
+    dataset: "truthful_qa"
+    subset: "multiple_choice"
+    split: "validation"
+    shots: 0
+    metric: "accuracy"
+    mode: "loglikelihood"
+
+  - id: "bbh"
+    name: "BBH (BIG-Bench Hard)"
+    dataset: "lukaemon/bbh"
+    shots: 3
+    metric: "exact_match"
+    mode: "cot"
+    max_new_tokens: 512
+
+  - id: "gpqa"
+    name: "GPQA (Google-Proof Q&A)"
+    dataset: "Idavidrein/gpqa"
+    subset: "gpqa_diamond"
+    shots: 5
+    metric: "accuracy"
+    mode: "cot"
+    max_new_tokens: 1024
+
+  - id: "gsm8k"
+    name: "GSM8K (Grade School Math)"
+    dataset: "gsm8k"
+    subset: "main"
+    split: "test"
+    shots: 5
+    metric: "accuracy"
+    mode: "cot"
+    max_new_tokens: 512
+
+  - id: "math"
+    name: "MATH (Hendrycks Competition Math)"
+    dataset: "lighteval/MATH"
+    split: "test"
+    shots: 4
+    metric: "accuracy"
+    mode: "cot"
+    max_new_tokens: 768

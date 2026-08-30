@@ -47,7 +47,6 @@ def chunked_linear_cross_entropy(
     hidden_chunks = flat_hidden.reshape(num_chunks, chunk_size, -1)
     label_chunks = flat_labels.reshape(num_chunks, chunk_size)
 
-    @jax.checkpoint
     def _chunk_step(carry, chunk_inputs):
         total_loss, total_count = carry
         h_chunk, y_chunk = chunk_inputs
@@ -79,7 +78,7 @@ def chunked_linear_cross_entropy(
         return (new_total_loss, new_total_count), None
 
     init_carry = (jnp.array(0.0, dtype=jnp.float32), jnp.array(0.0, dtype=jnp.float32))
-    (sum_loss, valid_tokens), _ = jax.lax.scan(_chunk_step, init_carry, (hidden_chunks, label_chunks))
+    (sum_loss, valid_tokens), _ = jax.lax.scan(_chunk_step, init_carry, (hidden_chunks, label_chunks), unroll=4)
 
     mean_loss = sum_loss / jnp.maximum(valid_tokens, 1.0)
     return mean_loss, valid_tokens

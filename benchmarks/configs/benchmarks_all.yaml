@@ -1,0 +1,165 @@
+# Master Benchmark Configuration for QaptaanLM Comprehensive Evaluation Suite
+# ==============================================================================
+
+models:
+  target_model: "kaptaan45/QaptaanLM-0.75B"
+  baseline_model: "Qwen/Qwen2.5-Coder-0.5B"
+  precision: "bfloat16"
+  device: "cuda"
+
+suites:
+  # ----------------------------------------------------------------------------
+  # Coding Suite
+  # ----------------------------------------------------------------------------
+  coding:
+    enabled: true
+    tasks:
+      - name: "humaneval"
+        display_name: "HumanEval"
+        metric: "pass@1"
+        temperature: 0.0
+        max_new_tokens: 512
+        timeout: 3.0
+        limit: null
+
+      - name: "humaneval_plus"
+        display_name: "HumanEval+"
+        metric: "pass@1"
+        temperature: 0.0
+        max_new_tokens: 512
+        timeout: 5.0
+        limit: null
+
+      - name: "mbpp"
+        display_name: "MBPP"
+        metric: "pass@1"
+        shots: 3
+        temperature: 0.0
+        max_new_tokens: 512
+        timeout: 3.0
+        limit: null
+
+      - name: "mbpp_plus"
+        display_name: "MBPP+"
+        metric: "pass@1"
+        shots: 3
+        temperature: 0.0
+        max_new_tokens: 512
+        timeout: 5.0
+        limit: null
+
+      - name: "livecodebench"
+        display_name: "LiveCodeBench"
+        metric: "pass@1"
+        temperature: 0.0
+        max_new_tokens: 1024
+        timeout: 10.0
+        limit: null
+
+      - name: "bigcodebench"
+        display_name: "BigCodeBench"
+        metric: "pass@1"
+        temperature: 0.0
+        max_new_tokens: 1024
+        timeout: 15.0
+        limit: null
+
+  # ----------------------------------------------------------------------------
+  # Intelligence, Reasoning & Knowledge Suite
+  # ----------------------------------------------------------------------------
+  reasoning:
+    enabled: true
+    tasks:
+      - name: "mmlu"
+        display_name: "MMLU"
+        metric: "accuracy"
+        shots: 5
+        mode: "loglikelihood"
+        limit: null
+
+      - name: "mmlu_pro"
+        display_name: "MMLU-Pro"
+        metric: "accuracy"
+        shots: 5
+        mode: "cot"
+        temperature: 0.0
+        max_new_tokens: 1024
+        limit: null
+
+      - name: "mmlu_redux"
+        display_name: "MMLU-Redux"
+        metric: "accuracy"
+        shots: 5
+        mode: "loglikelihood"
+        limit: null
+
+      - name: "arc_challenge"
+        display_name: "ARC-Challenge"
+        metric: "accuracy"
+        shots: 25
+        mode: "loglikelihood"
+        limit: null
+
+      - name: "hellaswag"
+        display_name: "HellaSwag"
+        metric: "accuracy"
+        shots: 10
+        mode: "loglikelihood"
+        limit: null
+
+      - name: "winogrande"
+        display_name: "Winogrande"
+        metric: "accuracy"
+        shots: 5
+        mode: "loglikelihood"
+        limit: null
+
+      - name: "truthfulqa"
+        display_name: "TruthfulQA"
+        metric: "accuracy"
+        shots: 0
+        mode: "loglikelihood"
+        limit: null
+
+      - name: "bbh"
+        display_name: "BBH"
+        metric: "exact_match"
+        shots: 3
+        mode: "cot"
+        temperature: 0.0
+        max_new_tokens: 512
+        limit: null
+
+      - name: "gpqa"
+        display_name: "GPQA"
+        metric: "accuracy"
+        shots: 5
+        mode: "cot"
+        temperature: 0.0
+        max_new_tokens: 1024
+        limit: null
+
+      - name: "gsm8k"
+        display_name: "GSM8K"
+        metric: "accuracy"
+        shots: 5
+        mode: "cot"
+        temperature: 0.0
+        max_new_tokens: 512
+        limit: null
+
+      - name: "math"
+        display_name: "MATH"
+        metric: "accuracy"
+        shots: 4
+        mode: "cot"
+        temperature: 0.0
+        max_new_tokens: 768
+        limit: null
+
+outputs:
+  results_dir: "metrics/results"
+  reports_dir: "reports/benchmarks"
+  save_json: true
+  save_markdown: true
+  save_html: true

@@ -50,28 +50,34 @@ def setup_logging(
 
     # File handlers: write to timestamped log AND stable static log
     if log_dir:
-        log_path = Path(log_dir)
-        log_path.mkdir(parents=True, exist_ok=True)
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        
-        # Timestamped log
-        file_handler = logging.FileHandler(
-            log_path / f"{log_name}_{timestamp}.log",
-            encoding="utf-8",
-        )
-        file_handler.setLevel(level)
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
+        try:
+            log_path = Path(log_dir)
+            if not log_path.is_absolute() and os.path.exists("/kaggle/working"):
+                log_path = Path("/kaggle/working") / log_path
+            log_path.mkdir(parents=True, exist_ok=True)
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            
+            # Timestamped log
+            file_handler = logging.FileHandler(
+                log_path / f"{log_name}_{timestamp}.log",
+                encoding="utf-8",
+            )
+            file_handler.setLevel(level)
+            file_handler.setFormatter(formatter)
+            logger.addHandler(file_handler)
 
-        # Static log (e.g. data_processing.log) for convenient tailing/cat
-        static_file_handler = logging.FileHandler(
-            log_path / f"{log_name}.log",
-            mode="w",
-            encoding="utf-8",
-        )
-        static_file_handler.setLevel(level)
-        static_file_handler.setFormatter(formatter)
-        logger.addHandler(static_file_handler)
+            # Static log (e.g. data_processing.log) for convenient tailing/cat
+            static_file_handler = logging.FileHandler(
+                log_path / f"{log_name}.log",
+                mode="w",
+                encoding="utf-8",
+            )
+            static_file_handler.setLevel(level)
+            static_file_handler.setFormatter(formatter)
+            logger.addHandler(static_file_handler)
+        except OSError:
+            # Fallback to console-only on read-only environments
+            pass
 
     # Silence noisy third-party streaming and network loggers
     for noisy in ["httpx", "httpcore", "urllib3", "fsspec", "datasets", "filelock"]:

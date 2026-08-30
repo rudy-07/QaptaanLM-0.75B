@@ -48,16 +48,14 @@ class PrefetchLoader:
                     break
 
                 batch_indices = indices[i : i + self.global_batch_size]
-                input_ids_list = []
-                labels_list = []
+                batch_input_ids = np.empty((self.global_batch_size, self.seq_length), dtype=np.int32)
+                batch_labels = np.empty((self.global_batch_size, self.seq_length), dtype=np.int32)
 
-                for idx in batch_indices:
+                for b_i, idx in enumerate(batch_indices):
                     item = self.dataset[int(idx)]
-                    input_ids_list.append(item["input_ids"][: self.seq_length])
-                    labels_list.append(item["labels"][: self.seq_length])
+                    batch_input_ids[b_i] = item["input_ids"][: self.seq_length]
+                    batch_labels[b_i] = item["labels"][: self.seq_length]
 
-                batch_input_ids = np.stack(input_ids_list, axis=0).astype(np.int32)
-                batch_labels = np.stack(labels_list, axis=0).astype(np.int32)
                 batch = {
                     "input_ids": batch_input_ids,
                     "labels": batch_labels,

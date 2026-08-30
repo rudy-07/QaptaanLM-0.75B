@@ -424,6 +424,19 @@ class CPTTrainer:
                 f"of {seq_len} tokens"
             )
 
+        if eval_dataset is not None and not isinstance(eval_dataset, PackedWindowDataset):
+            eval_dataset = PackedWindowDataset(
+                eval_dataset,
+                window_length=seq_len,
+                packed_length=packed_length,
+            )
+            logger.info(
+                "Expanded packed eval dataset into lazy non-overlapping windows: "
+                f"{len(eval_dataset.source_dataset):,} records x "
+                f"{eval_dataset.windows_per_record} windows = {len(eval_dataset):,} sequences "
+                f"of {seq_len} tokens"
+            )
+
         training_args = self._build_training_args(eval_dataset=eval_dataset)
         callbacks = self._build_callbacks()
 

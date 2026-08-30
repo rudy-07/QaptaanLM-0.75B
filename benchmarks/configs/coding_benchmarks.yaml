@@ -1,0 +1,56 @@
+# Coding Benchmarks Configuration (HumanEval, HumanEval+, MBPP, MBPP+, LiveCodeBench, BigCodeBench)
+# ==============================================================================
+
+suite: "coding"
+default_temperature: 0.0
+default_top_p: 1.0
+
+benchmarks:
+  - id: "humaneval"
+    name: "HumanEval"
+    dataset: "openai_humaneval"
+    split: "test"
+    metric: "pass@1"
+    max_new_tokens: 512
+    timeout: 3.0
+
+  - id: "humaneval_plus"
+    name: "HumanEval+"
+    dataset: "evalplus/humanevalplus"
+    split: "test"
+    metric: "pass@1"
+    max_new_tokens: 512
+    timeout: 5.0
+
+  - id: "mbpp"
+    name: "MBPP"
+    dataset: "google-research-datasets/mbpp"
+    split: "test"
+    sanitized: true
+    metric: "pass@1"
+    shots: 3
+    max_new_tokens: 512
+    timeout: 3.0
+
+  - id: "mbpp_plus"
+    name: "MBPP+"
+    dataset: "evalplus/mbppplus"
+    split: "test"
+    metric: "pass@1"
+    shots: 3
+    max_new_tokens: 512
+    timeout: 5.0
+
+  - id: "livecodebench"
+    name: "LiveCodeBench"
+    dataset: "livecodebench/code_generation_lite"
+    metric: "pass@1"
+    max_new_tokens: 1024
+    timeout: 10.0
+
+  - id: "bigcodebench"
+    name: "BigCodeBench"
+    dataset: "bigcode/bigcodebench"
+    metric: "pass@1"
+    max_new_tokens: 1024
+    timeout: 15.0

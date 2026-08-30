@@ -1,4 +1,4 @@
-"""Native JAX/Flax Distributed Trainer for Qwen3.5 CPT on TPU v5e-8."""
+"""Native JAX/Flax Distributed Trainer for Qwen3.5 CPT and SFT on TPU v5e-8."""
 
 import functools
 import logging
@@ -8,7 +8,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -42,6 +42,7 @@ class TrainConfig:
     # Model & Tokenizer
     model_name_or_path: str = "Qwen/Qwen3.5-0.8B-Base"
     output_dir: str = "checkpoints/jax_cpt"
+    mode: str = "cpt"  # "cpt" or "sft"
     
     # Dataset & Sequences
     max_seq_length: int = 1024
@@ -50,6 +51,7 @@ class TrainConfig:
     
     # Batch & Hardware (per_device_batch_size=2 and loss_chunk_size=256 guaranteed safe on 16GB HBM)
     per_device_batch_size: int = 2
+    per_device_eval_batch_size: int = 2
     gradient_accumulation_steps: int = 1
     loss_chunk_size: int = 256
     
@@ -68,7 +70,12 @@ class TrainConfig:
     dtype: str = "bfloat16"
     seed: int = 42
     
-    # Steps & Checkpointing (save every 2500 steps, max 2 checkpoints)
+    # Evaluation
+    eval_split_ratio: float = 0.015
+    eval_steps: int = 250
+    max_eval_batches: int = 25
+    
+    # Steps & Checkpointing (save every 500/2500 steps, max 2 checkpoints)
     max_steps: int = -1
     logging_steps: int = 50
     save_steps: int = 2500
@@ -78,7 +85,7 @@ class TrainConfig:
 
 
 class JAXTrainer:
-    """Distributed JAX Trainer for Full-Parameter Continued Pre-Training."""
+    """Distributed JAX Trainer for Full-Parameter CPT and SFT."""
 
     def __init__(self, config: TrainConfig, model_config: Optional[Qwen3_5Config] = None):
         self.config = config
@@ -91,6 +98,17 @@ class JAXTrainer:
         self.mesh = Mesh(self.devices, ("data",))
         self.data_sharding = NamedSharding(self.mesh, P("data", None))
         self.replicated_sharding = NamedSharding(self.mesh, P())
+        # Auto-configure global batch size to high-MFU direct batch size across available devices
+        if not self.config.smoke_test:
+            if self.num_devices == 1:
+                # Single GPU (RTX 6000 95GB / A100): micro_batch=4, grad_accum=2 -> 8 sequences (8,192 tokens/step)
+                # Guaranteed 100% stable memory (~4.2GB VRAM) with FlashAttention and unroll=16 scan
+                self.config.per_device_batch_size = 4
+                self.config.gradient_accumulation_steps = 2
+            elif self.num_devices >= 8:
+                # Multi-core TPU (TPU v5e-8): 2 sequences/core * 8 cores = 16 sequences
+                self.config.per_device_batch_size = min(self.config.per_device_batch_size, 2)
+                self.config.gradient_accumulation_steps = 1
 
         # Effective batch sizes
         self.global_batch_size = (
@@ -113,16 +131,18 @@ class JAXTrainer:
             self.warmup_steps = self.config.warmup_steps
 
         if self.is_primary:
-            logger.info("=" * 60)
-            logger.info("JAX Distributed Trainer Initialized")
+            stage_name = "Supervised Fine-Tuning (SFT)" if self.config.mode == "sft" else "Continued Pre-Training (CPT)"
+            logger.info("=" * 65)
+            logger.info(f"JAX Distributed Trainer Initialized [{stage_name}]")
             logger.info(f"Devices ({self.num_devices}): {[str(d) for d in self.devices]}")
             logger.info(f"Micro-batch per device: {self.config.per_device_batch_size}")
             logger.info(f"Global batch size: {self.global_batch_size} sequences")
             logger.info(f"Sequence length: {self.config.max_seq_length}")
             logger.info(f"Tokens per step: {self.tokens_per_step:,}")
             logger.info(f"Total target tokens: {self.config.target_tokens:,}")
+            logger.info(f"Learning rate: {self.config.learning_rate} (min_lr_ratio={self.config.min_lr_ratio})")
             logger.info(f"Total training steps: {self.total_steps:,} (warmup: {self.warmup_steps:,})")
-            logger.info("=" * 60)
+            logger.info("=" * 65)
 
         # Checkpoint manager
         self.checkpoint_manager = CheckpointManager(
@@ -205,14 +225,44 @@ class JAXTrainer:
 
     def _calculate_flops_per_token(self) -> float:
         """Calculate approximate FLOPs per token for Qwen3.5-0.8B."""
-        # 6N for standard attention/linear attention causal forward + backward
-        # Parameters ~752M
         num_params = 752_000_000
         return 6.0 * num_params
 
-    def train(self, train_dataset: Any):
-        """Execute full distributed Continued Pre-Training."""
-        # Setup lazy windowing if dataset is packed
+    def evaluate(self, state: train_state.TrainState, eval_loader: PrefetchLoader, eval_step_fn: Callable) -> Dict[str, float]:
+        """Run periodic evaluation on the validation split."""
+        losses = []
+        valid_tokens_list = []
+        total_tokens_list = []
+
+        eval_iter = iter(eval_loader)
+        max_batches = min(self.config.max_eval_batches, max(1, len(eval_loader.dataset) // self.global_batch_size))
+
+        for _ in range(max_batches):
+            try:
+                batch = next(eval_iter)
+            except StopIteration:
+                break
+            raw_loss, valid_tokens = eval_step_fn(state.params, batch)
+            raw_loss.block_until_ready()
+            losses.append(float(raw_loss))
+            valid_tokens_list.append(float(valid_tokens))
+            total_tokens_list.append(float(self.tokens_per_step))
+
+        eval_loader.stop()
+
+        avg_loss = float(np.mean(losses)) if losses else float("nan")
+        total_valid = sum(valid_tokens_list)
+        total_tok = sum(total_tokens_list)
+        trainable_ratio = (total_valid / max(total_tok, 1.0))
+
+        return {
+            "eval_loss": avg_loss,
+            "eval_trainable_ratio": trainable_ratio,
+        }
+
+    def train(self, train_dataset: Any, eval_dataset: Optional[Any] = None):
+        """Execute full distributed Continued Pre-Training or Supervised Fine-Tuning."""
+        # Setup lazy windowing if datasets are packed
         if not isinstance(train_dataset, WindowedDataset):
             train_dataset = WindowedDataset(
                 source_dataset=train_dataset,
@@ -221,11 +271,23 @@ class JAXTrainer:
             )
             if self.is_primary:
                 logger.info(
-                    f"Expanded packed dataset: {len(train_dataset.source_dataset):,} records -> "
+                    f"Expanded packed train dataset: {len(train_dataset.source_dataset):,} records -> "
                     f"{len(train_dataset):,} sequences of {self.config.max_seq_length} tokens"
                 )
 
-        # Setup asynchronous prefetch data loader
+        if eval_dataset is not None and not isinstance(eval_dataset, WindowedDataset):
+            eval_dataset = WindowedDataset(
+                source_dataset=eval_dataset,
+                window_length=self.config.max_seq_length,
+                packed_length=self.config.dataset_packed_seq_length,
+            )
+            if self.is_primary:
+                logger.info(
+                    f"Expanded packed eval dataset: {len(eval_dataset.source_dataset):,} records -> "
+                    f"{len(eval_dataset):,} sequences of {self.config.max_seq_length} tokens"
+                )
+
+        # Setup asynchronous prefetch data loader for training
         loader = PrefetchLoader(
             dataset=train_dataset,
             global_batch_size=self.global_batch_size,
@@ -273,6 +335,9 @@ class JAXTrainer:
             )
             return loss, (loss, valid_tokens)
 
+        grad_accum = self.config.gradient_accumulation_steps
+        micro_batch = self.config.per_device_batch_size
+
         @functools.partial(
             jax.jit,
             in_shardings=(state_sharding, data_sharding),
@@ -280,11 +345,51 @@ class JAXTrainer:
             donate_argnums=(0,),
         )
         def train_step(train_state_obj, batch):
-            grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
-            (_, (raw_loss, valid_tokens)), grads = grad_fn(train_state_obj.params, batch)
-            # Apply optimizer update
-            new_train_state = train_state_obj.apply_gradients(grads=grads)
-            return new_train_state, {"loss": raw_loss, "valid_tokens": valid_tokens}
+            if grad_accum > 1:
+                acc_input_ids = batch["input_ids"].reshape(grad_accum, micro_batch, -1)
+                acc_labels = batch["labels"].reshape(grad_accum, micro_batch, -1)
+
+                def _accum_step(carry, micro_idx):
+                    accum_grads, accum_loss, accum_valid = carry
+                    micro_batch_data = {
+                        "input_ids": acc_input_ids[micro_idx],
+                        "labels": acc_labels[micro_idx],
+                    }
+                    grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
+                    (_, (m_loss, m_valid)), m_grads = grad_fn(train_state_obj.params, micro_batch_data)
+                    new_accum_grads = jax.tree_util.tree_map(lambda a, g: a + g / grad_accum, accum_grads, m_grads)
+                    new_accum_loss = accum_loss + m_loss / grad_accum
+                    new_accum_valid = accum_valid + m_valid
+                    return (new_accum_grads, new_accum_loss, new_accum_valid), None
+
+                zero_grads = jax.tree_util.tree_map(lambda p: jnp.zeros_like(p), train_state_obj.params)
+                init_acc = (zero_grads, jnp.array(0.0, dtype=jnp.float32), jnp.array(0.0, dtype=jnp.float32))
+                (final_grads, avg_loss, total_valid), _ = jax.lax.scan(
+                    _accum_step, init_acc, jnp.arange(grad_accum)
+                )
+                new_train_state = train_state_obj.apply_gradients(grads=final_grads)
+                return new_train_state, {"loss": avg_loss, "valid_tokens": total_valid}
+            else:
+                grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
+                (_, (raw_loss, valid_tokens)), grads = grad_fn(train_state_obj.params, batch)
+                new_train_state = train_state_obj.apply_gradients(grads=grads)
+                return new_train_state, {"loss": raw_loss, "valid_tokens": valid_tokens}
+
+        @functools.partial(
+            jax.jit,
+            in_shardings=(self.replicated_sharding, data_sharding),
+            out_shardings=(self.replicated_sharding, self.replicated_sharding),
+        )
+        def eval_step(params, batch):
+            hidden_states = self.model.apply({"params": params}, batch["input_ids"])
+            embedding_weights = params["model"]["embed_tokens"]["embedding"]
+            loss, valid_tokens = chunked_linear_cross_entropy(
+                hidden_states=hidden_states,
+                labels=batch["labels"],
+                embedding_weights=embedding_weights,
+                chunk_size=loss_chunk_size,
+            )
+            return loss, valid_tokens
 
         if self.is_primary:
             logger.info("Starting training loop...")
@@ -330,11 +435,29 @@ class JAXTrainer:
 
             tokens_trained += self.tokens_per_step
 
+            # In-training evaluation
+            should_eval = (
+                eval_dataset is not None
+                and (step % self.config.eval_steps == 0 or step == self.total_steps)
+            )
+            eval_metrics = {}
+            if should_eval:
+                eval_loader = PrefetchLoader(
+                    dataset=eval_dataset,
+                    global_batch_size=self.global_batch_size,
+                    seq_length=self.config.max_seq_length,
+                    sharding=self.data_sharding,
+                    shuffle=False,
+                    seed=self.config.seed + step,
+                )
+                eval_metrics = self.evaluate(state, eval_loader, eval_step)
+
             # Logging
             should_log = (
                 step % self.config.logging_steps == 0
                 or step == self.total_steps
                 or self.config.smoke_test
+                or should_eval
             )
             if should_log:
                 now = time.time()
@@ -347,19 +470,24 @@ class JAXTrainer:
                 achieved_tflops = (tok_per_sec * flops_per_token) / 1e12
                 mfu_percent = (achieved_tflops / total_peak_tflops) * 100.0
 
+                # Trainable token ratio for SFT
+                valid_toks = float(metrics["valid_tokens"])
+                trainable_ratio = (valid_toks / max(self.tokens_per_step, 1.0)) * 100.0
+
                 # ETA
                 remaining_steps = self.total_steps - step
                 eta_seconds = remaining_steps * avg_step_time
                 eta_hours = eta_seconds / 3600.0
 
                 current_loss = float(metrics["loss"])
-                lr = float(self.config.learning_rate)
 
                 if self.is_primary:
                     pct = (step / self.total_steps) * 100.0
+                    eval_str = f" | Val Loss: {eval_metrics['eval_loss']:.4f}" if eval_metrics and not math.isnan(eval_metrics.get("eval_loss", float("nan"))) else ""
                     logger.info(
                         f"Step {step:,}/{self.total_steps:,} ({pct:.2f}%) | "
-                        f"Loss: {current_loss:.4f} | "
+                        f"Train Loss: {current_loss:.4f}{eval_str} | "
+                        f"Trainable: {trainable_ratio:.1f}% | "
                         f"Speed: {tok_per_sec:,.0f} tok/s ({steps_per_sec:.2f} steps/s) | "
                         f"MFU: {mfu_percent:.1f}% | "
                         f"Trained: {tokens_trained / 1e6:.2f}M tokens | "
@@ -371,14 +499,18 @@ class JAXTrainer:
             # Checkpointing (asynchronous non-blocking during training, blocking only at final step)
             is_final_step = (step == self.total_steps) or (self.config.smoke_test and step >= start_step + 5)
             if step % self.config.save_steps == 0 or is_final_step:
+                meta = {
+                    "loss": float(metrics["loss"]),
+                    "tokens_trained": tokens_trained,
+                    "step": step,
+                    "mode": self.config.mode,
+                }
+                if eval_metrics:
+                    meta.update(eval_metrics)
                 self.checkpoint_manager.save(
                     step=step,
                     state=state,
-                    metadata={
-                        "loss": float(metrics["loss"]),
-                        "tokens_trained": tokens_trained,
-                        "step": step,
-                    },
+                    metadata=meta,
                     blocking=is_final_step,
                 )
                 if self.is_primary:
@@ -394,7 +526,7 @@ class JAXTrainer:
         self.checkpoint_manager.wait_until_finished()
         total_time = time.time() - start_train_time
         if self.is_primary:
-            logger.info("=" * 60)
+            logger.info("=" * 65)
             logger.info(f"✓ Training finished! Total time: {total_time / 3600.0:.2f} hours")
-            logger.info("=" * 60)
+            logger.info("=" * 65)
         return state

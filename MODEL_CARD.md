@@ -32,9 +32,11 @@ library_name: transformers
 [![Architecture](https://img.shields.io/badge/Architecture-Hybrid%20DeltaNet%20%2B%20GQA-purple.svg)](#architecture)
 [![Context Length](https://img.shields.io/badge/Context-256K%20Native-orange.svg)](#model-specification)
 [![GitHub](https://img.shields.io/badge/GitHub-QaptaanLM--0.75B-181717.svg?logo=github)](https://github.com/rudy-07/QaptaanLM-0.75B)
+[![Kaggle Model](https://img.shields.io/badge/Kaggle-Model-20BEFF.svg?logo=kaggle)](https://www.kaggle.com/models/kaptaan45/qaptaanlm-0.75b)
 [![CPT Dataset](https://img.shields.io/badge/%F0%9F%A4%97%20CPT%20Dataset-kaptaan45%2FKapCode--1B-yellow.svg)](https://huggingface.co/datasets/kaptaan45/KapCode-1B)
 [![SFT Dataset](https://img.shields.io/badge/%F0%9F%A4%97%20SFT%20Dataset-kaptaan45%2FKapInstruct--100M-orange.svg)](https://huggingface.co/datasets/kaptaan45/KapInstruct-100M)
-[![Kaggle Dataset](https://img.shields.io/badge/Kaggle-kapcode--1b-20BEFF.svg?logo=kaggle)](https://www.kaggle.com/datasets/kaptaan45/kapcode-1b)
+[![Kaggle CPT Dataset](https://img.shields.io/badge/Kaggle-kapcode--1b-20BEFF.svg?logo=kaggle)](https://www.kaggle.com/datasets/kaptaan45/kapcode-1b)
+[![Kaggle SFT Dataset](https://img.shields.io/badge/Kaggle-kapinstruct--100m-20BEFF.svg?logo=kaggle)](https://www.kaggle.com/datasets/kaptaan45/kapinstruct-100m)
 
 **QaptaanLM-0.75B** is a compact, high-efficiency hybrid-attention foundation language model optimized for source code synthesis, technical reasoning, and long-context code comprehension. 
 
@@ -228,6 +230,8 @@ KapInstruct-100M is composed of 12 balanced instruction datasets spanning coding
 ## Related Repositories and Datasets
 
 - **GitHub Repository**: [rudy-07/QaptaanLM-0.75B](https://github.com/rudy-07/QaptaanLM-0.75B)
+- **Hugging Face Model**: [kaptaan45/QaptaanLM-0.75B](https://huggingface.co/kaptaan45/QaptaanLM-0.75B)
+- **Kaggle Model**: [kaptaan45/qaptaanlm-0.75b](https://www.kaggle.com/models/kaptaan45/qaptaanlm-0.75b)
 - **CPT Dataset (GitHub)**: [rudy-07/KapCode-1B](https://github.com/rudy-07/KapCode-1B)
 - **CPT Dataset (Hugging Face)**: [kaptaan45/KapCode-1B](https://huggingface.co/datasets/kaptaan45/KapCode-1B)
 - **SFT Dataset (GitHub)**: [rudy-07/KapInstruct-100M](https://github.com/rudy-07/KapInstruct-100M)

@@ -134,51 +134,41 @@ def auto_configure_batch_size(
                 )
                 safe_seq_length = 1024
 
-    # Base memory: model (4B/param FP32) + grads (4B/param FP32) + 8-bit AdamW (2B/param) + CUDA/NCCL overhead (~1.5GB)
+    # Recurrent Linear Attention Scan Safety:
+    # In PyTorch eager autograd, the unrolled recurrence over sequence length T retains
+    # intermediate [batch, heads, head_k_dim, head_v_dim] state tensors for every step
+    # across all 24 layers (~25 MB per token in FP32).
+    # At seq_len=1024: ~25 GB activations/sample -> fits within 95GB VRAM at micro_batch=1.
+    # At seq_len=4096: ~102 GB activations/sample -> exceeds 95GB VRAM at micro_batch=1.
+    # We cap safe_seq_length to 1024 on GPU for reliable, OOM-free SFT training.
+    if safe_seq_length > 1024:
+        logger.info(
+            f"Recurrent linear attention scan safety: capping max_seq_length from {seq_length} to 1024 "
+            f"to ensure full autograd recurrence fits comfortably within GPU VRAM."
+        )
+        safe_seq_length = 1024
+
+    # Base memory: model (4B/param FP32) + grads (4B/param FP32) + AdamW (8-bit or standard) + CUDA overhead
     base_memory_gb = (model_params_b * 10.0) + 1.5  # ~9.5 GB for 0.8B FP32 master weights
 
-    # Per-sample peak memory at loss computation
-    if liger_enabled:
-        # Liger: cross-entropy processes in chunks, peak is much lower
-        chunk_size = min(1024, safe_seq_length)
-        logits_gb = (chunk_size * vocab_size * 4) / (1024**3)
-    else:
-        # Standard: full logits tensor in fp32
-        logits_gb = (safe_seq_length * vocab_size * 4) / (1024**3)
-    activation_gb = (safe_seq_length / 4096) * 0.5
-    mem_per_sample_gb = logits_gb + activation_gb
+    # For recurrent linear attention in PyTorch autograd:
+    # 1024 tokens = ~25 GB activations + 1 GB logits
+    recurrent_act_gb = (safe_seq_length / 1024.0) * 25.0
+    logits_gb = (safe_seq_length * vocab_size * 4) / (1024**3)
+    mem_per_sample_gb = recurrent_act_gb + logits_gb
 
-    # Strict safety cap based on total GPU VRAM
-    if gpu_memory_gb <= 16.5:
-        if liger_enabled:
-            # With Liger savings, we can try micro_batch=2 on T4
-            available = max(0.0, gpu_memory_gb - base_memory_gb)
-            micro_batch = max(1, min(2, int(available / mem_per_sample_gb)))
-        else:
-            # 16GB GPUs (T4, P100, V100-16GB): Must use micro_batch=1
-            micro_batch = 1
-    elif gpu_memory_gb <= 24.5:
-        # 24GB GPUs (L4, RTX 3090, RTX 4090, A10G): max micro_batch=2
-        available = max(0.0, gpu_memory_gb - base_memory_gb)
-        micro_batch = max(1, min(2, int(available / mem_per_sample_gb)))
-    elif gpu_memory_gb <= 48.0:
-        # 40GB/48GB GPUs (A100-40GB, A6000): max micro_batch=4
-        available = max(0.0, gpu_memory_gb - base_memory_gb)
-        micro_batch = max(1, min(4, int(available / mem_per_sample_gb)))
+    available = max(0.0, gpu_memory_gb - base_memory_gb)
+    if safe_seq_length >= 1024:
+        micro_batch = 1  # 1 sequence of 1024 takes ~35GB total peak VRAM
+    elif safe_seq_length <= 512 and available > (mem_per_sample_gb * 2):
+        micro_batch = 2
     else:
-        # 80GB GPUs (A100-80GB, H100):
-        available = max(0.0, gpu_memory_gb - base_memory_gb)
-        micro_batch = max(1, int(available / mem_per_sample_gb))
+        micro_batch = 1
 
-    # Target effective global batch size: ~16 sequences
-    # For 0.8B models, 16-32 sequences is standard (Chinchilla/GPT-3 small).
-    # Larger batches (64+) waste GPU time on grad_accum and are unnecessary for CPT.
+    # Target effective global batch size: 16 sequences (16,384 tokens/step at seq=1024)
     target_effective_sequences = 16
-    # If seq_length was halved, double grad_accum to preserve same tokens/step
-    seq_ratio = seq_length // safe_seq_length  # e.g. 4096//2048 = 2
-    adjusted_target = target_effective_sequences * seq_ratio
     total_micro_batch = micro_batch * max(1, gpu_count)
-    grad_accum = max(1, adjusted_target // total_micro_batch)
+    grad_accum = max(1, target_effective_sequences // total_micro_batch)
 
     effective_tokens_per_step = safe_seq_length * micro_batch * grad_accum * max(1, gpu_count)
     logger.info(
@@ -266,28 +256,64 @@ def load_model_for_training(
             )
             from transformers import AutoModelForCausalLM
 
+            try:
+                model = AutoModelForCausalLM.from_pretrained(
+                    model_name_or_path,
+                    torch_dtype=torch_dtype,
+                    trust_remote_code=trust_remote_code,
+                    attn_implementation=attn_impl,
+                )
+            except (ValueError, Exception) as e_attn:
+                if attn_impl != "eager":
+                    logger.warning(
+                        f"Attention '{attn_impl}' not supported by custom model ({e_attn}). "
+                        "Retrying with attn_implementation='eager'..."
+                    )
+                    model = AutoModelForCausalLM.from_pretrained(
+                        model_name_or_path,
+                        torch_dtype=torch_dtype,
+                        trust_remote_code=trust_remote_code,
+                        attn_implementation="eager",
+                    )
+                else:
+                    raise e_attn
+    else:
+        from transformers import AutoModelForCausalLM
+
+        try:
             model = AutoModelForCausalLM.from_pretrained(
                 model_name_or_path,
                 torch_dtype=torch_dtype,
                 trust_remote_code=trust_remote_code,
                 attn_implementation=attn_impl,
             )
-    else:
-        from transformers import AutoModelForCausalLM
+        except (ValueError, Exception) as e_attn:
+            if attn_impl != "eager":
+                logger.warning(
+                    f"Attention '{attn_impl}' not supported by custom model ({e_attn}). "
+                    "Retrying with attn_implementation='eager'..."
+                )
+                model = AutoModelForCausalLM.from_pretrained(
+                    model_name_or_path,
+                    torch_dtype=torch_dtype,
+                    trust_remote_code=trust_remote_code,
+                    attn_implementation="eager",
+                )
+            else:
+                raise e_attn
 
-        model = AutoModelForCausalLM.from_pretrained(
-            model_name_or_path,
-            torch_dtype=torch_dtype,
-            trust_remote_code=trust_remote_code,
-            attn_implementation=attn_impl,
-        )
-
-    # Enable gradient checkpointing for memory efficiency
+    # Enable gradient checkpointing for memory efficiency if supported
     if gradient_checkpointing:
-        model.gradient_checkpointing_enable(
-            gradient_checkpointing_kwargs={"use_reentrant": False}
-        )
-        logger.info("Gradient checkpointing enabled")
+        try:
+            model.gradient_checkpointing_enable(
+                gradient_checkpointing_kwargs={"use_reentrant": False}
+            )
+            logger.info("Gradient checkpointing enabled")
+        except (ValueError, Exception) as e_gc:
+            logger.warning(
+                f"Gradient checkpointing not supported by {model.__class__.__name__} ({e_gc}). "
+                "Proceeding without gradient checkpointing (ample VRAM available on GPU)."
+            )
 
     # Ensure all parameters are trainable (full fine-tuning)
     for param in model.parameters():

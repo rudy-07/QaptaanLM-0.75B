@@ -1,0 +1,30 @@
+# Quick Evaluation Configuration (Curated Mini-Eval for rapid feedback)
+# ==============================================================================
+
+suite: "quick_eval"
+default_limit: 10
+
+tasks:
+  - name: "humaneval"
+    limit: 15
+    type: "code"
+
+  - name: "mbpp"
+    limit: 15
+    type: "code"
+
+  - name: "gsm8k"
+    limit: 20
+    type: "math"
+
+  - name: "mmlu"
+    limit: 25
+    type: "mcq"
+
+  - name: "arc_challenge"
+    limit: 20
+    type: "mcq"
+
+  - name: "hellaswag"
+    limit: 20
+    type: "mcq"
