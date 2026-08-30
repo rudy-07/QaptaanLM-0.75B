@@ -57,8 +57,9 @@ scripts/push_*.py
 scripts/check_*.py
 scripts/complete_*.py
 scripts/test_*.py
-scripts/build_jax_sft_notebooks.py
+scripts/build_*.py
 kaggle_staging/
+
 notebooks/kaggle_quickstart_staging/
 metrics/results/
 
