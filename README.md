@@ -42,6 +42,7 @@ QaptaanLM-0.75B is distributed across **8 dedicated repositories** on the Huggin
 - [Overview](#overview)
 - [Architecture](#architecture)
   - [Hybrid Attention Mechanism](#hybrid-attention-mechanism)
+  - [Architecture Parameter Breakdown](#architecture-parameter-breakdown)
   - [End-to-End Pipeline](#end-to-end-pipeline)
   - [Distributed Training Topology](#distributed-training-topology)
 - [Model Specification](#model-specification)
@@ -104,6 +105,10 @@ graph TD
     Norm --> Head["Tied LM Output Head"]
     Head --> Logits["Next-Token Logits"]
 ```
+
+### Architecture Parameter Breakdown
+
+![Architecture Parameter Breakdown](assets/architecture_parameter_breakdown.png)
 
 ### End-to-End Pipeline
 
@@ -429,6 +434,8 @@ By combining a **3:1 ratio of Gated DeltaNet linear attention to full attention*
 
 ![Inference Speed and 3-Way Benchmark Comparison](assets/three_way_comparison_metrics.png)
 
+![Inference Throughput Comparison](assets/inference_throughput_comparison.png)
+
 ### 3-Way Calibrated Generation Speed (CUDA, `bfloat16`, PyTorch)
 
 | Benchmark Task / Domain | Base Model (`Qwen3.5-0.8B`) | QaptaanLM CPT (0.75B) | QaptaanLM SFT (0.75B) | SFT Throughput Speedup |
@@ -438,6 +445,10 @@ By combining a **3:1 ratio of Gated DeltaNet linear attention to full attention*
 | **Fibonacci Sequence** (Dynamic Prog) | 21.12 tok/s | 24.02 tok/s | **23.85 tok/s** | **+12.9%** |
 | **Vectorized Numpy Matrix** (STEM Math) | 17.50 tok/s | 23.80 tok/s | **24.20 tok/s** | **+38.3%** |
 | **Average Generation Speed** | **19.63 tok/s** | **23.09 tok/s** | **23.76 tok/s** | **+21.0% Average Speedup** |
+
+### Preliminary Smoke Test Results
+
+![Preliminary Smoke Test Comparison](assets/preliminary_smoke_test_comparison.png)
 
 ---
 
@@ -579,6 +590,8 @@ flowchart TD
 
 The Continued Pre-Training phase was completed on **KapCode-1B** ([`GitHub`](https://github.com/rudy-07/KapCode-1B) | [`Hugging Face`](https://huggingface.co/datasets/kaptaan45/KapCode-1B) | [`Kaggle`](https://www.kaggle.com/datasets/kaptaan45/kapcode-1b)), a 1-billion-token curated dataset composed of 5 domain partitions:
 
+![KapCode Cover](assets/kapcode_cover_image.jpg)
+
 | Domain | Source Repository | Target Proportion | Target Tokens | Description |
 | :--- | :--- | :---:| :---:| :--- |
 | **Source Code** | `HuggingFaceCode/stack-v3-train` | **35%** | 350,000,000 | Multi-language source code filtered for quality and permissive licenses |
@@ -593,6 +606,8 @@ The Continued Pre-Training phase was completed on **KapCode-1B** ([`GitHub`](htt
 ### KapInstruct-100M (SFT Dataset)
 
 The Supervised Fine-Tuning phase trained on **KapInstruct-100M** ([`GitHub`](https://github.com/rudy-07/KapInstruct-100M) | [`Hugging Face`](https://huggingface.co/datasets/kaptaan45/KapInstruct-100M) | [`Kaggle`](https://www.kaggle.com/datasets/kaptaan45/kapinstruct-100m)), a **100,000,000-token** curated instruction mixture:
+
+![KapInstruct Cover](assets/kapinstruct_cover_image.jpg)
 
 | # | Source Identifier | Domain / Category | Share | Usable Tokens | License |
 |---|-------------------|-------------------|:-----:|:-------------:|---------|
