@@ -32,9 +32,28 @@ logs/TPU_CPT_TROUBLESHOOTING.md
 # Scratch & Temporary Folders
 scratch/
 move/
+reports/
+exports/
+kaggle_staging/
+kaggle_showcase_out/
+staging_kernel_*/
+notebooks/kaggle_quickstart_staging/
+metrics/results/
+diagnostic_and_fix_report.md
+llama_cpp_tool/
 
 # Notebooks checkpoints
 .ipynb_checkpoints/
+
+# Ephemeral testing, quantization, and conversion notebooks
+notebooks/kaggle_*quant*.ipynb
+notebooks/kaggle_*export*.ipynb
+notebooks/kaggle_all_6_*.ipynb
+notebooks/kaggle_multi_format_*.ipynb
+notebooks/kaggle_inference_*.ipynb
+notebooks/kaggle_upload_*.ipynb
+notebooks/kaggle_benchmark_*.ipynb
+notebooks/kaggle_rtx6000_*.ipynb
 
 # OS
 .DS_Store
@@ -46,13 +65,16 @@ Thumbs.db
 *.token
 kaggle.json
 
-# Local Publish / Sync / Upload / Fix / Push / Staging scripts & artifacts
+# Scratch / Diagnostic / Tuning / Testing / Ephemeral Scripts
 scripts/publish_*.py
 scripts/sync_*.py
 scripts/upload_*.py
 scripts/fix_*.py
-scripts/rebuild_and_upload_hf.py
-scripts/generate_comparison_report.py
+scripts/rebuild_*.py
+scripts/generate_comparison_*.py
+scripts/generate_cpt_*.py
+scripts/generate_sft_gguf_*.py
+scripts/generate_remaining_*.py
 scripts/push_*.py
 scripts/check_*.py
 scripts/complete_*.py
@@ -60,11 +82,13 @@ scripts/test_*.py
 scripts/build_*.py
 scripts/run_*.py
 scripts/convert_*.py
-kaggle_staging/
-
-notebooks/kaggle_quickstart_staging/
-metrics/results/
-
-
-
-
+scripts/compare_*.py
+scripts/diagnose_*.py
+scripts/execute_*.py
+scripts/extract_*.py
+scripts/find_*.py
+scripts/inspect_*.py
+scripts/parse_*.py
+scripts/tune_*.py
+scripts/update_*.py
+scripts/verify_*.py
